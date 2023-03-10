@@ -5,7 +5,7 @@
   Come later.
 </blockquote>
 
-**Ore** is a runtime capable string temlating engine
+**Ore** is a runtime capable string templating engine
 for nim language.
 
 There are quite a few templating engines out there,
