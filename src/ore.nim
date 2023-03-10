@@ -3,6 +3,7 @@ import strutils
 import math
 import tables
 import macros
+import options
 
 type
   CodePos* = tuple[offset, line, col: int]
@@ -16,13 +17,15 @@ type
     tkBool, tkVar
 
     tkExprStart, tkExprEnd  ## {{ and }}
+    tkStmtStart, tkStmtEnd  ## {% and %}
     tkBracket
   
   OperatorKind* = enum
     opDot,
     opPlus, opMinus
     opMult, opDivide
-    opAmp
+    opAmp,
+    opEq
 
   BracketKind* = enum
     brLParen, brRParen,
@@ -53,13 +56,13 @@ type
 
 # Enum to string conversions
 const brKindToStr*: array[BracketKind, string] = ["(", ")", "[", "]"]
-const opKindToStr*: array[OperatorKind, string] = [".", "+", "-", "*", "/", "&"]
-const opToPrecendece*: array[OperatorKind, int] = [ 10,  8,   8,   9,   9,   7 ]
+const opKindToStr*: array[OperatorKind, string] = [".", "+", "-", "*", "/", "&", "="]
+const opToPrecendece*: array[OperatorKind, int] = [ 10,  8,   8,   9,   9,   7 ,  1]
 
 
 func initToken*(pos: CodePos, kind: static[TokenKind]): Token =
   ## Create valueless token, only accepts valueless token kinds
-  when kind notin {tkEof, tkExprStart, tkExprEnd}:
+  when kind notin {tkEof, tkExprStart, tkExprEnd, tkStmtStart, tkStmtEnd}:
     {.error: "Only valueless token kinds are acceptable in this constructor".}
   Token(
     pos: pos,
@@ -143,6 +146,10 @@ func `$`*(tk: Token): string =
     result = "{{"
   of tkExprEnd:
     result = "}}"
+  of tkStmtStart:
+    result = "{%"
+  of tkStmtEnd:
+    result = "%}"
 
 func humanRepr*(pos: CodePos): string =
   fmt"line {pos.line}, col {pos.col} (offset: {pos.offset})"
@@ -170,6 +177,10 @@ func humanRepr*(tk: Token): string =
     result &= "expr start \"{{\" "
   of tkExprEnd:
     result &= "expr end \"}}\" "
+  of tkStmtStart:
+    result &= "stmt start \"{%\" "
+  of tkStmtEnd:
+    result &= "stmt end \"%}\" "
   of tkBracket:
     result &= fmt"""bracket "{brKindToStr[tk.brKind]}" """
   
@@ -180,12 +191,14 @@ type
   LexState* = enum
     lexText
     lexExpr
+    lexStmt
 
   Lexer* = object
     pos*: CodePos
     state*: LexState
     input*: string
     cChar*: char
+    exprPos*: Option[int]
 
 
 func initLexer*(input: string): Lexer =
@@ -194,7 +207,8 @@ func initLexer*(input: string): Lexer =
     pos: (-1, 1, 0),
     state: lexText,
     input: input,
-    cChar: '\0'
+    cChar: '\0',
+    exprPos: none[int]()
   )
 
 func isFinished*(lex: Lexer): bool =
@@ -204,6 +218,9 @@ func isFinished*(lex: Lexer): bool =
 proc advance*(lex: var Lexer): char {.discardable.} =
   ## Advance lexer by one char
   lex.pos.offset += 1
+
+  if lex.exprPos.isSome:
+    lex.exprPos = (lex.exprPos.get() + 1).some
   
   case lex.cChar
   of '\n':
@@ -216,7 +233,7 @@ proc advance*(lex: var Lexer): char {.discardable.} =
     lex.cChar = '\0'
   else:
     lex.cChar = lex.input[lex.pos.offset]
-  
+
   return lex.cChar
 
 func peek*(lex: Lexer, offset: int = 1): char =
@@ -269,6 +286,104 @@ proc parseNum(lex: var Lexer): Token =
     result = pos.initToken(numInt)
 
 
+func tokenizeExpr(lex: var Lexer): Token =
+  var c = lex.skipWhitespace
+  let pos = lex.pos
+
+
+  if lex.exprPos.get() == 0:
+    case c
+    of '{':
+      result = pos.initToken(tkExprStart)
+      lex.advance()
+      return
+    of '%':
+      result = pos.initToken(tkStmtStart)
+      lex.advance()
+      return
+    else:
+      raise OreError.newException:
+        "Unexpected error"
+
+  case c
+  of '1', '2', '3', '4', '5', '6', '7', '8', '9', '0':
+    result = lex.parseNum()
+  of '"':
+    c = lex.advance()
+    var text = ""
+      
+    while c != '"':
+      case c
+      of '\\':
+        let esqPos = lex.pos
+        c = lex.advance()
+        case c
+        of 'n': text &= '\n'
+        of 'r': text &= '\r'
+        of 't': text &= '\t'
+        of '"': text &= '"'
+        # TODO: \u1234 \x12 stuff
+        else:
+          raise OreError.newException:
+            fmt"Invalid escape sequence at {esqPos.humanRepr}"
+      of '\0':
+        raise OreError.newException:
+          fmt"Unexpected end of file while parsing string at {pos.humanRepr}"
+      else:
+        text &= c
+      c = lex.advance()
+
+    result = pos.initToken(text, true)
+
+  else:
+
+    proc maybeCloseExpr(lex: var Lexer, t: static[TokenKind]): Token =
+      if lex.peek == '}':
+        result = pos.initToken(t)
+        lex.advance()
+        lex.advance()
+        lex.state = lexText
+        lex.exprPos = none[int]()
+    
+    case c
+    of '}':
+      result = lex.maybeCloseExpr(tkExprEnd)
+      return
+    of '%':
+      result = lex.maybeCloseExpr(tkStmtEnd)
+      return
+    else: discard
+
+    let opIdx = opKindToStr.find($c)
+    if opIdx != -1:
+      result = pos.initToken(opIdx.OperatorKind)
+      return
+      
+    let brIdx = brKindToStr.find($c)
+    if brIdx != -1:
+      result = pos.initToken(brIdx.BracketKind)
+      return
+
+    if c.isAlphaAscii():
+      var
+        ident = $c
+        next = lex.peek()
+        
+      while next.isAlphaAscii or next in {'_'}:
+        c = lex.advance()
+        ident &= c
+        next = lex.peek()
+        
+      case ident
+      of "true":
+        result = pos.initToken(true)
+      of "false":
+        result = pos.initToken(false)
+      else:
+        result = pos.initToken(ident, false, tkVar)
+      return
+
+
 func getNextToken*(lex: var Lexer): Token =
   lex.advance()
 
@@ -287,6 +402,11 @@ func getNextToken*(lex: var Lexer): Token =
         case lex.peek
         of '{':  # expression block perhaps?
           lex.state = lexExpr
+          lex.exprPos = -1.some
+          break
+        of '%':
+          lex.state = lexStmt
+          lex.exprPos = -1.some
           break
         else:  # Nope, no expression here treat as normal char
           text &= c
@@ -298,83 +418,9 @@ func getNextToken*(lex: var Lexer): Token =
     result = pos.initToken(text, false)
 
   of lexExpr:
-    c = lex.skipWhitespace
-    let pos = lex.pos
-    
-    case c
-    of '{':
-      result = pos.initToken(tkExprStart)
-      lex.advance()
-    
-    of '}':
-      if lex.peek == '}':
-        result = pos.initToken(tkExprEnd)
-        lex.advance()
-        lex.advance()
-        lex.state = lexText
-      else:
-        raise OreError.newException:
-          fmt"Unexpected token: {lex.peek} at {pos.humanRepr}"
-    
-    of '1', '2', '3', '4', '5', '6', '7', '8', '9', '0':
-      result = lex.parseNum()
-
-    of '"':
-      c = lex.advance()
-      var text = ""
-      
-      while c != '"':
-        case c
-        of '\\':
-          let esqPos = lex.pos
-          c = lex.advance()
-          case c
-          of 'n': text &= '\n'
-          of 'r': text &= '\r'
-          of 't': text &= '\t'
-          of '"': text &= '"'
-          # TODO: \u1234 \x12 stuff
-          else:
-            raise OreError.newException:
-              fmt"Invalid escape sequence at {esqPos.humanRepr}"
-        of '\0':
-          raise OreError.newException:
-            fmt"Unexpected end of file while parsing string at {pos.humanRepr}"
-        else:
-          text &= c
-        c = lex.advance()
-
-      result = pos.initToken(text, true)
-
-    else:
-      let opIdx = opKindToStr.find($c)
-      if opIdx != -1:
-        result = pos.initToken(opIdx.OperatorKind)
-        return
-      
-      let brIdx = brKindToStr.find($c)
-      if brIdx != -1:
-        result = pos.initToken(brIdx.BracketKind)
-        return
-
-      if c.isAlphaAscii():
-        var
-          ident = $c
-          next = lex.peek()
-        
-        while next.isAlphaAscii or next in {'_'}:
-          c = lex.advance()
-          ident &= c
-          next = lex.peek()
-        
-        case ident
-        of "true":
-          result = pos.initToken(true)
-        of "false":
-          result = pos.initToken(false)
-        else:
-          result = pos.initToken(ident, false, tkVar)
-        return
+    result = lex.tokenizeExpr()
+  of lexStmt:
+    result = lex.tokenizeExpr()
 
 
 type
@@ -535,7 +581,7 @@ proc parseExpression*(p: var Parser): Node =
         tmp = tmp.operand
       else: break
 
-  while tok.kind notin {tkExprEnd, tkEof}:
+  while tok.kind notin {tkExprEnd, tkStmtEnd, tkEof}:
     case tok.kind
     
     of tkStr, tkBool, tkFloat, tkInt, tkVar:
@@ -629,6 +675,11 @@ proc parseBlock*(p: var Parser): Node =
       result.rope.add p.parseExpression()
       p.eatToken({tkExprEnd})
     
+    of lexStmt:
+      p.eatToken({tkStmtStart})
+      result.rope.add p.parseExpression()  # TODO: actually do something different for statements
+      p.eatToken({tkStmtEnd})
+
     state = p.lexState()
 
 
