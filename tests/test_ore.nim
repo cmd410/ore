@@ -13,13 +13,13 @@ suite "Test Lexer":
 
 suite "Test parser":
   test "Test simple":
-    const input = "{{ 1 }}"#"{{ (-1 - 2 * 3 + 4) * 3 / 4 + 5 }}"
+    const input = "{{ -(-1 - 2 * 3 + 4) * 3 / 4 + 5 }}"
     var p = initParser(input)
     var b = p.parseBlock()
     echo b.treeRepr
 
 suite "Test engine":
   test "Test simple":
-    const input = "Hello world! {{ 2 + 2 }}"
+    const input = "Hello world! {{ 2 * (2 + 2) }}"
     var e = initOreEngine()
     echo e.renderString(input)

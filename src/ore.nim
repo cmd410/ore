@@ -22,6 +22,7 @@ type
     opDot,
     opPlus, opMinus
     opMult, opDivide
+    opAmp
 
   BracketKind* = enum
     brLParen, brRParen,
@@ -51,10 +52,9 @@ type
 
 
 # Enum to string conversions
-const opKindToStr*: array[OperatorKind, string] = [".", "+", "-", "*", "/"]
-const opToPrecendece*: array[OperatorKind, int] = [100, 1, 1, 2, 2]
 const brKindToStr*: array[BracketKind, string] = ["(", ")", "[", "]"]
-
+const opKindToStr*: array[OperatorKind, string] = [".", "+", "-", "*", "/", "&"]
+const opToPrecendece*: array[OperatorKind, int] = [ 10,  8,   8,   9,   9,   7 ]
 
 
 func initToken*(pos: CodePos, kind: static[TokenKind]): Token =
@@ -482,18 +482,58 @@ proc eatToken*(p: var Parser, kinds: set[TokenKind]): Token {.discardable.} =
       fmt"Unexpected token at {result.pos.humanRepr}. Expected {kinds}, got {result.kind}"
 
 
+proc unreacahble(tree: Node) =
+  ## Call on unreacahble? branches and other
+  ## impossible? condition to catch bugs in parser 
+  raise OreError.newException:
+    (
+      "Invalid syntax." &
+      "This is likely a bug in the parser, please report at " &
+      "https://github.com/cmd410/ore/issues\n" &
+      "Here's a tree representation of parsed tree so far, include it in report:\n" &
+      tree.treeRepr() 
+    )
+
+
+template assertRule(p: Parser,
+                    rule: untyped,
+                    pos: CodePos,
+                    message: string = "unknown"
+                    ): untyped =
+  ## Check if given rule is satisfied
+  ## if not raise OreError with a detailed message
+  if not rule:
+    raise OreError.newException:
+      (
+        "Syntax error: " &
+        message &
+        " at " & $pos.humanRepr
+      )
+
+
 proc parseExpression*(p: var Parser): Node =
   # BEHOLD, recursiveless recursive descent expression parsing
   var tok = p.cTok
   var subExprStack: seq[Node]
-
-  template validateSyntax(condition, body: untyped): untyped =
-    ## Check condition true: do body, otherwise raise OreError 
-    if condition:
-      body
-    else:
-      raise OreError.newException:
-        fmt"Invalid syntax at {p.cTok.pos.humanRepr}"
+  
+  proc setRightmostNil(a, b: Node): bool {.discardable.} =
+    ## Set deepest empty rightmost operand of node `a`, to node `b`
+    ## returns false if no such operand was found, true on success
+    result = false
+    var tmp = a
+    while true:
+      case tmp.kind
+      of ndBinOp:
+        if tmp.right == nil:
+          tmp.right = b
+          return true
+        tmp = tmp.right
+      of ndUnOp:
+        if tmp.operand == nil:
+          tmp.operand = b
+          return true
+        tmp = tmp.operand
+      else: break
 
   while tok.kind notin {tkExprEnd, tkEof}:
     case tok.kind
@@ -506,88 +546,61 @@ proc parseExpression*(p: var Parser): Node =
       else:
         # if something was parsed before we do...
         case result.kind
-        
-        of ndUnOp:
-          # Put value into Unary operator operand slot
-          validateSyntax(result.operand == nil):
-            result.operand = node
-        
-        of ndBinOp:
-          # replace the rightmost operand with current value node
-          
-          var tmp = result  # store original here and descent
-          while result.kind == ndBinOp:
-            if result.right == nil:
-              break
-            result = result.right
-          validateSyntax(result.kind == ndBinOp):
-            result.right = node
-          result = tmp   # restore original
-
-        of ndValue:
-          # tell that two values in a row is not a valid syntax
-          validateSyntax(false): discard
-        
-        else: discard
+        of ndUnOp, ndBinOp:
+          result.setRightmostNil(node)
+        else: result.unreacahble()
 
     of tkOperator:
       if result == nil:
         result = Node(kind: ndUnOp, unOp: tok)
       else:
-        
         # Check previous operation
         case result.kind
         of ndValue:
           result = Node(kind: ndBinOp, binOp: tok, left: result)
-        of ndUnOp:
-          if result.operand == nil:
-            result.operand = Node(kind: ndUnOp, unOp: tok)
-          else:
-            result = Node(kind: ndBinOp, binOp: tok, left: result)
-        of ndBinOp:
-          validateSyntax(result.right != nil): discard
-          
-          # Compare operator precednce
-          let
-            cPres = opToPrecendece[tok.opKind]
-            pPres = opToPrecendece[result.binOp.opKind]
-            d = cmp(cPres, pPres+result.precedence)
-          
-          if d <= 0:
-            result = Node(kind: ndBinOp, binOp: tok, left: result)
-          else:
-            var r = result.right
-            result.right = Node(kind: ndBinOp, binOp: tok, left: r)
-        else: discard
+        of ndUnOp, ndBinOp:
+          # Attempt to fill rightmost to UnaryOp
+          if not result.setRightmostNil(Node(kind: ndUnOp, unOp: tok)):
+            # If all right operands are full
+            case result.kind
+            of ndBinOp:
+              # Compare operator precednce
+              let
+                cPres = opToPrecendece[tok.opKind]
+                pPres = opToPrecendece[result.binOp.opKind]
+                d = cmp(cPres, pPres+result.precedence)
+
+              if d <= 0:
+                result = Node(kind: ndBinOp, binOp: tok, left: result)
+              else:
+                var r = result.right
+                result.right = Node(kind: ndBinOp, binOp: tok, left: r)
+
+            of ndUnOp:
+              result = Node(kind: ndBinOp, binOp: tok, left: result)
+            
+            else: result.unreacahble()
+        else: result.unreacahble()
+
     of tkBracket:
       case tok.brKind
       of brLParen:
         subExprStack.add result
         result = nil
       of brRParen:
-        validateSyntax(subExprStack.len != 0): discard
-        validateSyntax(result != nil): discard
+
+        p.assertRule(subExprStack.len != 0, tok.pos, "')' doesn't match any '('")
+        p.assertRule(result != nil, tok.pos, "empty `()`")
 
         result.precedence = 1000 * subExprStack.len()
         var prev = subExprStack.pop()
         if prev != nil:
-          # Check previous operation/
-          case prev.kind
-          of ndUnOp:
-            validateSyntax(prev.operand == nil):
-              prev.operand = result
-              result = prev
-          of ndBinOp:
-            validateSyntax(prev.right == nil):
-              prev.right = result
-              result = prev
-          else:
-            validateSyntax(false): discard
-      else:
-        validateSyntax(false): discard
+          prev.setRightmostNil(result)
+          result = prev
+      else: result.unreacahble()
+    
     of tkExprEnd, tkEof: break
-    else:
-      validateSyntax(false): discard
+    else: result.unreacahble()
     tok = p.advance()
 
 
@@ -630,13 +643,13 @@ type
     case kind*: VariantKind
     of varNull: discard
     of varInt:
-      intVal*: int
+      vintVal*: int
     of varFloat:
-      floatVal*: float
+      vfloatVal*: float
     of varStr:
-      strVal*: string
+      vstrVal*: string
     of varBool:
-      boolVal*: bool
+      vboolVal*: bool
   
   OreContext* = object
     variables*: Table[string, Variant]
@@ -651,11 +664,11 @@ type
 
 
 func null*(s:typedesc[Variant]): Variant = Variant(kind: varNull)
-converter toVariant*(v: int): Variant = Variant(kind: varInt, intVal: v)
-converter toVariant*(v: float): Variant = Variant(kind: varFloat, floatVal: v)
-converter toVariant*(v: string): Variant = Variant(kind: varStr, strVal: v)
-converter toVariant*(v: bool): Variant = Variant(kind: varBool, boolVal: v)
-converter toVariant*(v: Token): Variant =
+func toVariant*(v: int): Variant = Variant(kind: varInt, vintVal: v)
+func toVariant*(v: float): Variant = Variant(kind: varFloat, vfloatVal: v)
+func toVariant*(v: string): Variant = Variant(kind: varStr, vstrVal: v)
+func toVariant*(v: bool): Variant = Variant(kind: varBool, vboolVal: v)
+func toVariant*(v: Token): Variant =
   template error() =
     raise OreError.newException:
       fmt"Can't convert token {v.kind} to variant at {v.pos.humanRepr}"
@@ -679,13 +692,13 @@ func humanRepr*(v: Variant): string =
   of varNull:
     result &= "(null)"
   of varInt:
-    result &= fmt"(int {v.intVal})"
+    result &= fmt"(int {v.vintVal})"
   of varFloat:
-    result &= fmt"(float {v.floatVal})"
+    result &= fmt"(float {v.vfloatVal})"
   of varStr:
-    result &= fmt"(string {v.strVal.escape})"
+    result &= fmt"(string {v.vstrVal.escape})"
   of varBool:
-    result &= fmt"(bool {v.boolVal})"
+    result &= fmt"(bool {v.vboolVal})"
 
 
 func `$`*(v: Variant): string =
@@ -693,13 +706,13 @@ func `$`*(v: Variant): string =
   of varNull:
     result = "null"
   of varInt:
-    result = $v.intVal
+    result = $v.vintVal
   of varFloat:
-    result = $v.floatVal
+    result = $v.vfloatVal
   of varStr:
-    result = $v.strVal
+    result = $v.vstrVal
   of varBool:
-    result = $v.boolVal
+    result = $v.vboolVal
 
 
 func initOreEngine*(): OreEngine =
@@ -715,49 +728,57 @@ proc getVar*(ctx: OreContext, name: string): Variant =
   ctx.variables.getOrDefault(name, Variant.null)
 
 
-macro genMath(opName: untyped) =
+template multiRoute(val: Variant, name, body: untyped): untyped =
+  ## Assign variant value to name
+  ## and do body for each branch
+  case val.kind
+  of varInt:
+    let name = val.vintVal
+    body
+  of varFloat:
+    let name = val.vfloatVal
+    body
+  of varBool:
+    let name = val.vboolVal
+    body
+  of varStr:
+    let name = val.vstrVal
+    body
+  else: discard
+
+template tryOp(op: untyped) =
+  when compiles(op):
+    return op.toVariant()
+
+macro genBinOp(opName: untyped): untyped =
   let opStr = $opName
   quote do:
     func `opName`*(a, b: Variant): Variant =
+
       template oreError() =
         raise OreError.newException:
-          "Unsupported operation between " & $a & "(" & $a.kind & " and " & $b & "(" & $b.kind & ") - '" & $`opStr` & "'"
-      case a.kind
+          (
+            "Unsupported operation between " &
+            $a & " (" & $a.kind & ") and " &
+            $b & " (" & $b.kind & ") - '" & $`opStr` & "'"
+          )
 
-      of varInt:
-        let x = a.intVal
-        case b.kind:
-        of varInt:
-          let y = b.intVal
-          result = `opName`(x, y).toVariant()
-        of varFloat:
-          let y = b.floatVal
-          result = `opName`(x.float, y).toVariant()
-        else: oreError()
+      a.multiRoute(x):
+        b.multiRoute(y):
+          when typeof(x) is typeof(y):
+            tryOp(`opName`(x, y))
+          elif typeof(x) is string:
+            tryOp(`opName`(x, $y))
+          else:
+            tryOp(`opName`(x, typeof(x)(y)))
+      oreError()
 
-      of varFloat:
-        let x = a.floatVal
-        case b.kind:
-        of varInt:
-          let y = b.intVal
-          result = `opName`(x, y.float).toVariant()
-        of varFloat:
-          let y = b.floatVal
-          result = `opName`(x, y).toVariant()
-        else:oreError()
-      of varStr:
-        if `opStr` == "+":
-          result = ($a & $b).toVariant()
-        else: oreError()
-      else: oreError()
-
-
-genMath(`+`)
-genMath(`-`)
-genMath(`*`)
-genMath(`/`)
-
-
+genBinOp(`+`)
+genBinOp(`-`)
+genBinOp(`*`)
+genBinOp(`/`)
+genBinOp(`&`)
+genBinOp(`==`)
 
 macro genUnOp(opName: untyped) =
   let opStr = $opName
@@ -766,15 +787,12 @@ macro genUnOp(opName: untyped) =
       template oreError() =
         raise OreError.newException:
           "Unsupported operation for " & $a & "(" & $a.kind & " - '" & $`opStr` & "'"
-      case a.kind
-      of varInt: result = `opName`(a.intVal).toVariant()
-      of varFloat: result = `opName`(a.floatVal).toVariant()
-      else: oreError()
-
+      a.multiRoute(x):
+        tryOp(`opName`(x))
+      oreError()
 
 genUnOp(`-`)
 genUnOp(`+`)
-
 
 func evalExpression(ctx: OreContext, node: Node): Variant =
   case node.kind
@@ -809,12 +827,13 @@ func evalExpression(ctx: OreContext, node: Node): Variant =
       result = ctx.evalExpression(node.left) * ctx.evalExpression(node.right)
     of opDivide:
       result = ctx.evalExpression(node.left) / ctx.evalExpression(node.right)
+    of opAmp:
+      result = ctx.evalExpression(node.left) & ctx.evalExpression(node.right)
     else:
       raise OreError.newException:
         "Operation unsupported."
 
   else: discard
-
 
 proc renderString*(e: var OreEngine, input: string): string =
   var p = initParser(input)
