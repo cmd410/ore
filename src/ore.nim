@@ -1072,6 +1072,19 @@ func evalExpression(ctx: OreContext, node: Node): Variant =
         )
       )
     )
+
+    func getSide(side: string): NimNode {.compiletime.} =
+      newCall(
+        newDotExpr(
+          ident("ctx"),
+          ident("evalExpression")
+        ),
+        newDotExpr(
+          ident("node"),
+          ident(side)
+        )
+      )
+
     let caseStmt = result[0]
     for i in opPlus..OperatorKind.high:
       if i in {opEq}: continue
@@ -1082,26 +1095,8 @@ func evalExpression(ctx: OreContext, node: Node): Variant =
           newTree(
             kind=nnkInfix,
             opIdent,
-            newCall(
-              newDotExpr(
-                ident("ctx"),
-                ident("evalExpression")
-              ),
-              newDotExpr(
-                ident("node"),
-                ident("left")
-              )
-            ),
-            newCall(
-              newDotExpr(
-                ident("ctx"),
-                ident("evalExpression")
-              ),
-              newDotExpr(
-                ident("node"),
-                ident("right")
-              )
-            )
+            getSide("left"),
+            getSide("right")
           )
         )
       )
