@@ -24,8 +24,9 @@ type
     opDot,
     opPlus, opMinus
     opMult, opDivide
-    opAmp,
-    opEq
+    opAmp, # &
+    # =     ==        <        >         <=        >=
+    opEq, opCmpEq, opCmpLs, opCmpGt, opCmpEqLs, opCmpEqGt
 
   BracketKind* = enum
     brLParen, brRParen,
@@ -56,8 +57,8 @@ type
 
 # Enum to string conversions
 const brKindToStr*: array[BracketKind, string] = ["(", ")", "[", "]"]
-const opKindToStr*: array[OperatorKind, string] = [".", "+", "-", "*", "/", "&", "="]
-const opToPrecendece*: array[OperatorKind, int] = [ 10,  8,   8,   9,   9,   7 ,  1]
+const opKindToStr*: array[OperatorKind, string] = [".", "+", "-", "*", "/", "&", "=", "==", "<", ">", "<=", ">="]
+const opToPrecendece*: array[OperatorKind, int] = [ 10,  8,   8,   9,   9,   7 ,  1,   5,    5,   5,   5,    5  ]
 
 
 func initToken*(pos: CodePos, kind: static[TokenKind]): Token =
@@ -1014,6 +1015,10 @@ genBinOp(`*`)
 genBinOp(`/`)
 genBinOp(`&`)
 genBinOp(`==`)
+genBinOp(`<`)
+genBinOp(`>`)
+genBinOp(`<=`)
+genBinOp(`>=`)
 
 macro genUnOp(opName: untyped) =
   let opStr = $opName
@@ -1053,6 +1058,78 @@ func isTruthy*(n: Variant): bool =
 
 
 func evalExpression(ctx: OreContext, node: Node): Variant =
+
+  macro genBinOperatorsImpl() =
+    result = newStmtList(
+      newTree(
+        kind=nnkCaseStmt,
+        newDotExpr(
+          newDotExpr(
+            ident("node"),
+            ident("binOp")
+          ),
+          ident("opKind")
+        )
+      )
+    )
+    let caseStmt = result[0]
+    for i in opPlus..OperatorKind.high:
+      if i in {opEq}: continue
+      let opIdent = ident(opKindToStr[i])
+      var impl = newStmtList(
+        newAssignment(
+          ident("result"),
+          newTree(
+            kind=nnkInfix,
+            opIdent,
+            newCall(
+              newDotExpr(
+                ident("ctx"),
+                ident("evalExpression")
+              ),
+              newDotExpr(
+                ident("node"),
+                ident("left")
+              )
+            ),
+            newCall(
+              newDotExpr(
+                ident("ctx"),
+                ident("evalExpression")
+              ),
+              newDotExpr(
+                ident("node"),
+                ident("right")
+              )
+            )
+          )
+        )
+      )
+      caseStmt.add(
+        newTree(
+          kind=nnkOfBranch,
+          ident($i),
+          impl
+        )
+      )
+    caseStmt.add(
+      newTree(
+        kind=nnkElse,
+        newStmtList(
+          newTree(
+            kind=nnkRaiseStmt,
+            newCall(
+              newDotExpr(
+                ident("OreError"),
+                ident("newException")
+              ),
+              newStrLitNode("Operation unsupported.")
+            )
+          )
+        )
+      )
+    )
+
   case node.kind
   of ndValue:
     let value = node.value
@@ -1076,20 +1153,7 @@ func evalExpression(ctx: OreContext, node: Node): Variant =
         fmt"Unsupported unary operator - {node.unOp.opKind}"
 
   of ndBinOp:
-    case node.binOp.opKind
-    of opPlus:
-      result = ctx.evalExpression(node.left) + ctx.evalExpression(node.right)
-    of opMinus:
-      result = ctx.evalExpression(node.left) - ctx.evalExpression(node.right)
-    of opMult:
-      result = ctx.evalExpression(node.left) * ctx.evalExpression(node.right)
-    of opDivide:
-      result = ctx.evalExpression(node.left) / ctx.evalExpression(node.right)
-    of opAmp:
-      result = ctx.evalExpression(node.left) & ctx.evalExpression(node.right)
-    else:
-      raise OreError.newException:
-        "Operation unsupported."
+    genBinOperatorsImpl()
 
   else: node.unreacahble()
 
