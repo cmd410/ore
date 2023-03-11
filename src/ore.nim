@@ -986,19 +986,10 @@ template tryOp(op: untyped) =
   when compiles(op):
     return op.toVariant()
 
-macro genBinOp(opName: untyped): untyped =
+macro genBinOp(opName: untyped) =
   let opStr = $opName
-  quote do:
+  result = quote do:
     func `opName`*(a, b: Variant): Variant =
-
-      template oreError() =
-        raise OreError.newException:
-          (
-            "Unsupported operation between " &
-            $a & " (" & $a.kind & ") and " &
-            $b & " (" & $b.kind & ") - '" & $`opStr` & "'"
-          )
-
       a.multiRoute(x):
         b.multiRoute(y):
           when typeof(x) is typeof(y):
@@ -1007,7 +998,13 @@ macro genBinOp(opName: untyped): untyped =
             tryOp(`opName`(x, $y))
           else:
             tryOp(`opName`(x, typeof(x)(y)))
-      oreError()
+      raise OreError.newException:
+        (
+          "Unsupported operation between " &
+          $a & " (" & $a.kind & ") and " &
+          $b & " (" & $b.kind & ") - '" & $`opStr` & "'"
+        )
+
 
 macro genUnOp(opName: untyped) =
   let opStr = $opName
