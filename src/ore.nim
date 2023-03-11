@@ -221,8 +221,8 @@ proc advance*(lex: var Lexer): char {.discardable.} =
   lex.pos.offset += 1
 
   if lex.exprPos.isSome:
-    lex.exprPos = (lex.exprPos.get() + 1).some
-  
+    lex.exprPos.get += 1
+
   case lex.cChar
   of '\n':
     lex.pos.line += 1
