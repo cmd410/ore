@@ -439,6 +439,7 @@ type
     ndUnOp
     ndBinOp
     ndSetVar
+    ndIfBlock
 
   Node* = ref object
     precedence*: int
@@ -459,6 +460,10 @@ type
     of ndSetVar:
       varName: Token
       varValue: Node
+    of ndIfBlock:
+      conditionNode*: Node
+      truePath*: Node
+      falsePath*: Node
 
   Parser* = object
     lex*: Lexer
@@ -491,6 +496,11 @@ func treeRepr*(n: Node, indent: int = 0): string =
   of ndSetVar:
     result &= fmt"set {n.varName}:\n"
     result &= n.varValue.treeRepr(indent + deltaIndent)
+  of ndIfBlock:
+    result &= "if:\n"
+    result &= n.conditionNode.treeRepr(indent + deltaIndent)
+    result &= n.truePath.treeRepr(indent + deltaIndent)
+    result &= n.falsePath.treeRepr(indent + deltaIndent)
   
   if not result.endsWith('\n'):
     result &= '\n'
@@ -499,8 +509,9 @@ func treeRepr*(n: Node, indent: int = 0): string =
 func isConst*(n: Node): bool =
   ## Check if node can be evaluated
   ## without any external
-  if n == nil: return false
   result = false
+  if n == nil: return
+  
   case n.kind
   of ndValue:
     result = n.value.kind != tkVar
@@ -515,6 +526,8 @@ func isConst*(n: Node): bool =
     result = n.left.isConst() and n.right.isConst()
   of ndNoOp:
     result = true
+  of ndIfBlock:
+    result = n.conditionNode.isConst()
   of ndSetVar: discard
 
 
@@ -680,6 +693,9 @@ proc parseBlock*(p: var Parser, tillStmt: static[string] = ""): Node =
     rope: @[]
   )
 
+  when tillStmt == "endif":
+    var ifBlock = Node(kind: ndIfBlock, truePath: result)
+
   when tillStmt != "":
     var endWordMet = false
   else:
@@ -720,10 +736,30 @@ proc parseBlock*(p: var Parser, tillStmt: static[string] = ""): Node =
         var blockNode = p.parseBlock("endblock")
         blockNode.nameTok = idTok
         result.rope.add blockNode
+      of "if":
+        var conditionNode = p.parseExpression()
+        p.eatToken({tkStmtEnd})
+        var
+          node = p.parseBlock("endif")
+        node.conditionNode = conditionNode
+        result.rope.add node
+      of "else":
+        
+        when tillStmt != "endif":
+          p.assertRule(false, p.cTok.pos, "else statement outside of if block")
+        else:
+          p.eatToken({tkStmtEnd})
+          let elseBlock = p.parseBlock("endif")
+          elseBlock.conditionNode = Node(kind: ndValue, value: p.lex.pos.initToken(true))
+          endWordMet = true
+          ifBlock.falsePath = elseBlock
+          break
+
       of tillStmt:
         when tillStmt != "":
           endWordMet = true
           break
+        else: result.unreacahble()
       else:
         raise OreError.newException:
           fmt"Unknown statement '{stmtStart}' at {stmtStart.pos.humanRepr}"
@@ -734,7 +770,8 @@ proc parseBlock*(p: var Parser, tillStmt: static[string] = ""): Node =
       endWordMet, p.lex.pos,
       "Block needs to be closed with '{% " & tillStmt & " %}' statement, yet block ended abruptly"
     )
-
+    when tillStmt == "endif":
+      result = ifBlock
 
 
 type
@@ -818,7 +855,7 @@ func `$`*(v: Variant): string =
     result = $v.vstrVal
   of varBool:
     result = $v.vboolVal
-
+  
 
 func initOreEngine*(): OreEngine =
   OreEngine()
@@ -899,6 +936,25 @@ macro genUnOp(opName: untyped) =
 genUnOp(`-`)
 genUnOp(`+`)
 
+
+func isTruthy*(n: Variant): bool =
+  func checkTrue[T](v: T): bool =
+    when v is bool:
+      return v
+    elif v is int:
+      return v != 0
+    elif v is float:
+      return v != 0.0
+    elif v is string:
+      return not v.isEmptyOrWhitespace()
+    else:
+      {.error: "Unsupported type".}
+  
+  n.multiRoute(x):
+    return checkTrue(x)
+  return false
+
+
 func evalExpression(ctx: OreContext, node: Node): Variant =
   case node.kind
   of ndValue:
@@ -940,19 +996,30 @@ func evalExpression(ctx: OreContext, node: Node): Variant =
 
   else: node.unreacahble()
 
-proc renderRope(e: var OreEngine, ropeNode: Node): string =
+proc renderNode(ctx: var OreContext, node: Node): string  # Forward decl
+proc renderRope(ctx: var OreContext, ropeNode: Node): string =
   for i in ropeNode.rope:
-    case i.kind
-    of ndValue, ndUnOp, ndBinOp:
-      result &= $e.globalContext.evalExpression(i)
-    of ndRope:
-      result &= e.renderRope(i)
-    of ndSetVar:
-      e.globalContext.setVar(
-        i.varName.strValue,
-        e.globalContext.evalExpression(i.varValue)
-      )
+    result &= ctx.renderNode(i)
+
+
+proc renderNode(ctx: var OreContext, node: Node): string =
+  if node == nil: return ""
+  case node.kind
+  of ndRope: result = ctx.renderRope(node)
+  of ndValue, ndUnOp, ndBinOp:
+    result &= $ctx.evalExpression(node)
+  of ndSetVar:
+    ctx.setVar(
+      node.varName.strValue,
+      ctx.evalExpression(node.varValue)
+    )
+  of ndIfBlock:
+    let condition = ctx.evalExpression(node.conditionNode)
+    if condition.isTruthy():
+      result &= ctx.renderNode(node.truePath)
     else:
+      result &= ctx.renderNode(node.falsePath)
+  else:
       raise OreError.newException:
         "Internal error"
 
@@ -961,4 +1028,5 @@ proc renderString*(e: var OreEngine, input: string): string =
   var parsed = p.parseBlock()
   doAssert parsed.kind == ndRope
   
-  result = e.renderRope(parsed)
+  result = e.globalContext.renderRope(parsed)
+  debugEcho parsed.treeRepr

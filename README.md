@@ -42,7 +42,7 @@ Example:
 {% block name %}   
 {% endblock %}
 
-# conditional blocks (WIP) 
+# conditional blocks
 {% if condition %}  
 {% endif %}
 
