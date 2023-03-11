@@ -447,6 +447,7 @@ type
     of ndValue:
       value*: Token
     of ndRope:
+      nameTok*: Token
       rope*: seq[Node]
     of ndUnOp:
       unOp*: Token
@@ -475,7 +476,7 @@ func treeRepr*(n: Node, indent: int = 0): string =
   of ndValue:
     result &= fmt"Value: <{n.value}> ({n.value.kind})"
   of ndRope:
-    result &= "Rope:\n"
+    result &= "Rope '" & $n.nameTok & "' :\n"
     for i in n.rope:
       result &= i.treeRepr(indent + deltaIndent)
   of ndUnOp:
@@ -673,16 +674,19 @@ proc parseExpression*(p: var Parser): Node =
     tok = p.advance()
 
 
-proc parseBlock*(p: var Parser): Node =
+proc parseBlock*(p: var Parser, tillStmt: static[string] = ""): Node =
   result = Node(
     kind: ndRope,
     rope: @[]
   )
 
-  var state = p.lexState()
-  p.advance()
+  when tillStmt != "":
+    var endWordMet = false
+  else:
+    p.advance()  # ew
 
   while not p.lex.isFinished():
+    var state = p.lexState()
     case state:
     of lexText:
       let tok = p.eatToken({tkStr, tkExprEnd})
@@ -710,13 +714,27 @@ proc parseBlock*(p: var Parser): Node =
         let valNode = p.parseExpression()
         let node = Node(kind: ndSetVar, varName: idTok, varValue: valNode)
         result.rope.add node
+      of "block":
+        let idTok = p.eatToken({tkVar})
+        p.eatToken({tkStmtEnd})
+        var blockNode = p.parseBlock("endblock")
+        blockNode.nameTok = idTok
+        result.rope.add blockNode
+      of tillStmt:
+        when tillStmt != "":
+          endWordMet = true
+          break
       else:
         raise OreError.newException:
           fmt"Unknown statement '{stmtStart}' at {stmtStart.pos.humanRepr}"
 
       p.eatToken({tkStmtEnd})
+  when tillStmt != "":
+    p.assertRule(
+      endWordMet, p.lex.pos,
+      "Block needs to be closed with '{% " & tillStmt & " %}' statement, yet block ended abruptly"
+    )
 
-    state = p.lexState()
 
 
 type
@@ -922,19 +940,25 @@ func evalExpression(ctx: OreContext, node: Node): Variant =
 
   else: node.unreacahble()
 
-proc renderString*(e: var OreEngine, input: string): string =
-  var p = initParser(input)
-  var parsed = p.parseBlock()
-  doAssert parsed.kind == ndRope
-  
-  for i in parsed.rope:
+proc renderRope(e: var OreEngine, ropeNode: Node): string =
+  for i in ropeNode.rope:
     case i.kind
     of ndValue, ndUnOp, ndBinOp:
       result &= $e.globalContext.evalExpression(i)
+    of ndRope:
+      result &= e.renderRope(i)
     of ndSetVar:
       e.globalContext.setVar(
         i.varName.strValue,
         e.globalContext.evalExpression(i.varValue)
       )
     else:
-      discard
+      raise OreError.newException:
+        "Internal error"
+
+proc renderString*(e: var OreEngine, input: string): string =
+  var p = initParser(input)
+  var parsed = p.parseBlock()
+  doAssert parsed.kind == ndRope
+  
+  result = e.renderRope(parsed)

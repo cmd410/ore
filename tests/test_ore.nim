@@ -12,3 +12,8 @@ suite "Test engine":
     const input = "{% set a = 10 %}{% set b = 32 %}{{ a + b }}"
     var e = initOreEngine()
     check e.renderString(input) == "42"
+
+  test "Test blocks":
+    const input = "{% block TestBlock %}Test{% endblock %}"
+    var e = initOreEngine()
+    check e.renderString(input) == "Test"
