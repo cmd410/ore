@@ -152,7 +152,10 @@ func `$`*(tk: Token): string =
     result = "%}"
 
 func humanRepr*(pos: CodePos): string =
-  fmt"line {pos.line}, col {pos.col} (offset: {pos.offset})"
+  if pos.offset < 0:
+    "unknown location"
+  else:
+    fmt"line {pos.line}, col {pos.col} (offset: {pos.offset})"
 
 func humanRepr*(tk: Token): string =
   ## Get descriptive, yet human-readable string representation of token
@@ -490,42 +493,66 @@ type
     cTok*: Token
 
 
+func getNodePos*(n: Node): CodePos =
+  ## Attempt to get position in code given node
+  ## originates from
+  if n == nil: return (-1, -1, -1)
+  case n.kind
+  of ndValue:
+    result = n.value.pos
+  of ndRope:
+    result = (0, 0, 0)
+    if n.rope.len > 0:
+      result = n.rope[0].getNodePos()
+  of ndUnOp:
+    result = n.unOp.pos
+  of ndBinOp:
+    result = n.binOp.pos
+  of ndSetVar:
+    result = n.varName.pos
+  of ndIfBlock:
+    result = n.conditionNode.getNodePos()
+  else:
+    result = (-1, -1, -1)
+
+
 func treeRepr*(n: Node, indent: int = 0): string =
   ## Return a tree string representation of node
-  result = indent.spaces & "|"
+  result = indent.spaces & "| "
   if n == nil:
     result &= "nil\n"
     return
   const deltaIndent = 4
 
+  func endl(n: Node): string =
+    if not result.endsWith('\n'):
+      result = fmt" [ {n.getNodePos().humanRepr} ]" & '\n'
+    else: result = ""
+
   case n.kind
   of ndValue:
-    result &= fmt"Value: <{n.value}> ({n.value.kind})"
+    result &= fmt"Value: <{n.value}> ({n.value.kind})" & endl(n)
   of ndRope:
-    result &= "Rope '" & $n.nameTok & "' :\n"
+    result &= "Rope '" & $n.nameTok & "' :" & endl(n)
     for i in n.rope:
       result &= i.treeRepr(indent + deltaIndent)
   of ndUnOp:
-    result &= fmt"Unary operator ({n.unOp}):" & '\n'
+    result &= fmt"Unary operator ({n.unOp}):" & endl(n)
     result &= n.operand.treeRepr(indent + deltaIndent)
   of ndBinOp:
-    result &= fmt"Binary operator ({n.binOp}):" & '\n'
+    result &= fmt"Binary operator ({n.binOp}):" & endl(n)
     result &= n.left.treeRepr(indent + deltaIndent)
     result &= n.right.treeRepr(indent + deltaIndent)
   of ndNoOp:
     result &= "NoOp"
   of ndSetVar:
-    result &= fmt"set {n.varName}:\n"
+    result &= fmt"set {n.varName}:" & endl(n)
     result &= n.varValue.treeRepr(indent + deltaIndent)
   of ndIfBlock:
     result &= "if:\n"
     result &= n.conditionNode.treeRepr(indent + deltaIndent)
     result &= n.truePath.treeRepr(indent + deltaIndent)
     result &= n.falsePath.treeRepr(indent + deltaIndent)
-  
-  if not result.endsWith('\n'):
-    result &= '\n'
-
 
 func isConst*(n: Node): bool =
   ## Check if node can be evaluated
