@@ -1009,17 +1009,6 @@ macro genBinOp(opName: untyped): untyped =
             tryOp(`opName`(x, typeof(x)(y)))
       oreError()
 
-genBinOp(`+`)
-genBinOp(`-`)
-genBinOp(`*`)
-genBinOp(`/`)
-genBinOp(`&`)
-genBinOp(`==`)
-genBinOp(`<`)
-genBinOp(`>`)
-genBinOp(`<=`)
-genBinOp(`>=`)
-
 macro genUnOp(opName: untyped) =
   let opStr = $opName
   quote do: 
@@ -1031,9 +1020,19 @@ macro genUnOp(opName: untyped) =
         tryOp(`opName`(x))
       oreError()
 
-genUnOp(`-`)
-genUnOp(`+`)
+macro batchGenOps() =
+  template callGenFunc(name, target): untyped =
+    newCall(ident(name), newTree(kind=nnkAccQuoted, target))
+  result = newStmtList()
+  for i in opPlus..OperatorKind.high:
+    if i in {opEq}: continue
+    let opIdent = ident(opKindToStr[i])
+    result.add callGenFunc("genBinOp", opIdent)
+  for i in [opPlus, opMinus]:
+    let opIdent = ident(opKindToStr[i])
+    result.add callGenFunc("genUnOp", opIdent)
 
+batchGenOps()
 
 func isTruthy*(n: Variant): bool =
   ## Check if variant value is truthy
@@ -1052,7 +1051,6 @@ func isTruthy*(n: Variant): bool =
       return not v.isEmptyOrWhitespace()
     else:
       {.error: "Unsupported type".}
-  
   n.multiRoute(x):
     return checkTrue(x)
 
@@ -1073,7 +1071,7 @@ func evalExpression(ctx: OreContext, node: Node): Variant =
       )
     )
 
-    func getSide(side: string): NimNode {.compiletime.} =
+    template getSide(side: string): untyped =
       newCall(
         newDotExpr(ident("ctx"),ident("evalExpression")),
         newDotExpr(ident("node"),ident(side))
