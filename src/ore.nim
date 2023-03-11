@@ -199,20 +199,7 @@ type
     input*: string
     cChar*: char
     exprPos*: Option[int]
-
-
-func initLexer*(input: string): Lexer =
-  ## Create lexer for given text
-  Lexer(
-    pos: (-1, 1, 0),
-    state: lexText,
-    input: input,
-    cChar: '\0',
-    exprPos: none[int]()
-  )
-
-func isFinished*(lex: Lexer): bool =
-  (lex.input.high == -1) or (lex.pos.offset > lex.input.high)
+    defState: Option[LexState]
 
 
 proc advance*(lex: var Lexer): char {.discardable.} =
@@ -236,6 +223,24 @@ proc advance*(lex: var Lexer): char {.discardable.} =
 
   return lex.cChar
 
+
+func initLexer*(input: string): Lexer =
+  ## Create lexer for given text
+  result = Lexer(
+    pos: (-1, 1, 0),
+    state: lexText,
+    input: input,
+    cChar: '\0',
+    exprPos: none[int](),
+    defState: none[LexState]()
+  )
+  result.advance()
+
+
+func isFinished*(lex: Lexer): bool =
+  (lex.input.high == -1) or (lex.pos.offset > lex.input.high)
+
+
 func peek*(lex: Lexer, offset: int = 1): char =
   ## Return char that is offset characters away from current
   let pos = lex.pos.offset + offset
@@ -258,11 +263,12 @@ proc parseNum(lex: var Lexer): Token =
   var
     c = lex.cChar
     numInt = (c.byte - '0'.byte).int
-    next = lex.peek
+    next = lex.peek()
 
   while next.isDigit:
-    lex.advance
+    lex.advance()
     c = lex.cChar
+    next = lex.peek()
     numInt = numInt * 10 + (c.byte - '0'.byte).int
   if next == '.':
     next = lex.peek(2)
@@ -271,13 +277,13 @@ proc parseNum(lex: var Lexer): Token =
       numFloat = 0.0
     
     if next.isDigit:
-      lex.advance
+      lex.advance()
       while next.isDigit:
-        lex.advance
+        lex.advance()
         c = lex.cChar
         numFloat = numFloat + (c.byte - '0'.byte).float / pow(10'f, exp)
         exp += 1.0
-        next = lex.peek
+        next = lex.peek()
 
       result = pos.initToken(numInt.float + numFloat)
     else:
@@ -289,7 +295,6 @@ proc parseNum(lex: var Lexer): Token =
 func tokenizeExpr(lex: var Lexer): Token =
   var c = lex.skipWhitespace
   let pos = lex.pos
-
 
   if lex.exprPos.get() == 0:
     case c
@@ -341,7 +346,6 @@ func tokenizeExpr(lex: var Lexer): Token =
       if lex.peek == '}':
         result = pos.initToken(t)
         lex.advance()
-        lex.advance()
         lex.state = lexText
         lex.exprPos = none[int]()
     
@@ -385,27 +389,30 @@ func tokenizeExpr(lex: var Lexer): Token =
 
 
 func getNextToken*(lex: var Lexer): Token =
-  lex.advance()
-
   var c = lex.cChar
 
   if c == '\0':
     return lex.pos.initToken(tkEof)
+  
+  lex.state = lex.defState.get(lex.state)
+  lex.defState = none[LexState]()
 
   case lex.state
   of lexText:
     let pos = lex.pos
-    var text = ""
+    var
+      text = ""
+      
     while true:
       case c
       of '{':  # Entering code block?
         case lex.peek
         of '{':  # expression block perhaps?
-          lex.state = lexExpr
+          lex.defState = lexExpr.some
           lex.exprPos = -1.some
           break
         of '%':
-          lex.state = lexStmt
+          lex.defState = lexStmt.some
           lex.exprPos = -1.some
           break
         else:  # Nope, no expression here treat as normal char
@@ -421,6 +428,7 @@ func getNextToken*(lex: var Lexer): Token =
     result = lex.tokenizeExpr()
   of lexStmt:
     result = lex.tokenizeExpr()
+  lex.advance()
 
 
 type
@@ -430,10 +438,12 @@ type
     ndRope
     ndUnOp
     ndBinOp
+    ndSetVar
 
   Node* = ref object
     precedence*: int
     case kind*: NodeKind
+    of ndNoOp: discard
     of ndValue:
       value*: Token
     of ndRope:
@@ -445,7 +455,9 @@ type
       binOp*: Token
       left*: Node
       right*: Node
-    else: discard
+    of ndSetVar:
+      varName: Token
+      varValue: Node
 
   Parser* = object
     lex*: Lexer
@@ -475,6 +487,9 @@ func treeRepr*(n: Node, indent: int = 0): string =
     result &= n.right.treeRepr(indent + deltaIndent)
   of ndNoOp:
     result &= "NoOp"
+  of ndSetVar:
+    result &= fmt"set {n.varName}:\n"
+    result &= n.varValue.treeRepr(indent + deltaIndent)
   
   if not result.endsWith('\n'):
     result &= '\n'
@@ -484,7 +499,7 @@ func isConst*(n: Node): bool =
   ## Check if node can be evaluated
   ## without any external
   if n == nil: return false
-
+  result = false
   case n.kind
   of ndValue:
     result = n.value.kind != tkVar
@@ -499,6 +514,7 @@ func isConst*(n: Node): bool =
     result = n.left.isConst() and n.right.isConst()
   of ndNoOp:
     result = true
+  of ndSetVar: discard
 
 
 func initParser*(s: string): Parser =
@@ -526,6 +542,13 @@ proc eatToken*(p: var Parser, kinds: set[TokenKind]): Token {.discardable.} =
   else:
     raise OreError.newException:
       fmt"Unexpected token at {result.pos.humanRepr}. Expected {kinds}, got {result.kind}"
+
+
+proc eatOperator*(p: var Parser, opKinds: set[OperatorKind]): Token {.discardable.} =
+  result = p.eatToken({tkOperator})
+  if not (result.opKind in opKinds):
+    raise OreError.newException:
+      fmt"Unexpected operator '{result.opKind}'. Expected {opKinds}."
 
 
 proc unreacahble(tree: Node) =
@@ -677,7 +700,20 @@ proc parseBlock*(p: var Parser): Node =
     
     of lexStmt:
       p.eatToken({tkStmtStart})
-      result.rope.add p.parseExpression()  # TODO: actually do something different for statements
+
+      let stmtStart = p.eatToken({tkVar})
+
+      case stmtStart.strValue
+      of "set":
+        let idTok = p.eatToken({tkVar})
+        p.eatOperator({opEq})
+        let valNode = p.parseExpression()
+        let node = Node(kind: ndSetVar, varName: idTok, varValue: valNode)
+        result.rope.add node
+      else:
+        raise OreError.newException:
+          fmt"Unknown statement '{stmtStart}' at {stmtStart.pos.humanRepr}"
+
       p.eatToken({tkStmtEnd})
 
     state = p.lexState()
@@ -884,7 +920,7 @@ func evalExpression(ctx: OreContext, node: Node): Variant =
       raise OreError.newException:
         "Operation unsupported."
 
-  else: discard
+  else: node.unreacahble()
 
 proc renderString*(e: var OreEngine, input: string): string =
   var p = initParser(input)
@@ -895,5 +931,10 @@ proc renderString*(e: var OreEngine, input: string): string =
     case i.kind
     of ndValue, ndUnOp, ndBinOp:
       result &= $e.globalContext.evalExpression(i)
+    of ndSetVar:
+      e.globalContext.setVar(
+        i.varName.strValue,
+        e.globalContext.evalExpression(i.varValue)
+      )
     else:
       discard

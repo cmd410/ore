@@ -2,24 +2,13 @@ import unittest
 
 import ore
 
-
-suite "Test Lexer":
-  test "Test simple":
-    const input = "{{ 2 }} Hello, world! 2 + 2 = {{ (2 + 2.92) / \"test\" * variable}}"
-    var lexer = initLexer(input)
-    while not lexer.isFinished():
-      echo lexer.state, " ", lexer.getNextToken().humanRepr
-
-
-suite "Test parser":
-  test "Test simple":
-    const input = "{{ -(-1 - 2 * 3 + 4) * 3 / 4 + 5 }}"
-    var p = initParser(input)
-    var b = p.parseBlock()
-    echo b.treeRepr
-
 suite "Test engine":
   test "Test simple":
-    const input = "Hello world! {{ 2 * (2 + 2) }}"
+    const input = "-(-1 - 2 * 3 + 4) * 3 / 4 + 5 = {{ -(-1 - 2 * 3 + 4) * 3 / 4 + 5 }}"
     var e = initOreEngine()
-    echo e.renderString(input)
+    check e.renderString(input) == "-(-1 - 2 * 3 + 4) * 3 / 4 + 5 = 7.25"
+  
+  test "Test set variable":
+    const input = "{% set a = 10 %}{% set b = 32 %}{{ a + b }}"
+    var e = initOreEngine()
+    check e.renderString(input) == "42"

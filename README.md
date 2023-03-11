@@ -32,7 +32,7 @@ Example:
 # insert expression
 2 + 2 = {{ 2 + 2 * a }}
 
-# define variables (WIP)
+# define variables
 {% set variable = 42 %}
 
 # Template inheritance (WIP)
