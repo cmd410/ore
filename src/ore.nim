@@ -1075,14 +1075,8 @@ func evalExpression(ctx: OreContext, node: Node): Variant =
 
     func getSide(side: string): NimNode {.compiletime.} =
       newCall(
-        newDotExpr(
-          ident("ctx"),
-          ident("evalExpression")
-        ),
-        newDotExpr(
-          ident("node"),
-          ident(side)
-        )
+        newDotExpr(ident("ctx"),ident("evalExpression")),
+        newDotExpr(ident("node"),ident(side))
       )
 
     let caseStmt = result[0]
