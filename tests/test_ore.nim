@@ -19,6 +19,6 @@ suite "Test engine":
     check e.renderString(input) == "Test"
 
   test "Test conditinal blocks":
-    const input = "Now we can tell what is {% if true %}True{% else %}False{% endif %} and what is {% if false %}True{% else %}False{% endif %}"
+    const input = "Now we can tell what is {% if true %}True{% else %}False{% endif %} and what is {% if false %}True{% elif false %}Impossible{% else %}False{% endif %}"
     var e = initOreEngine()
     check e.renderString(input) == "Now we can tell what is True and what is False"

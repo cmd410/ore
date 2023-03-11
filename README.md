@@ -43,7 +43,9 @@ Example:
 {% endblock %}
 
 # conditional blocks
-{% if condition %}  
+{% if condition %}
+{% elif other_condition %}
+{% else %}
 {% endif %}
 
 # for loop blocks (WIP)

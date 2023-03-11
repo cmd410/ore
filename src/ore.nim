@@ -754,6 +754,18 @@ proc parseBlock*(p: var Parser, tillStmt: static[string] = ""): Node =
           endWordMet = true
           ifBlock.falsePath = elseBlock
           break
+      
+      of "elif":
+        when tillStmt != "endif":
+          p.assertRule(false, p.cTok.pos, "elif statement outside of if block")
+        else:
+          var conditionNode = p.parseExpression()
+          p.eatToken({tkStmtEnd})
+          let elseBlock = p.parseBlock("endif")
+          elseBlock.conditionNode = conditionNode
+          endWordMet = true
+          ifBlock.falsePath = elseBlock
+          break
 
       of tillStmt:
         when tillStmt != "":
@@ -1029,4 +1041,3 @@ proc renderString*(e: var OreEngine, input: string): string =
   doAssert parsed.kind == ndRope
   
   result = e.globalContext.renderRope(parsed)
-  debugEcho parsed.treeRepr
