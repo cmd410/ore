@@ -1,8 +1,7 @@
 <h1 style="text-align: center">ORE</h1>
 
 <blockquote style="margin:1rem;background-color: #efb306; color: #272727; border-radius: 0.5rem">
-  NOTE: This software is UNUSABLE at this stage of development.
-  Come later.
+  NOTE: This software is alpha stage. Expect bugs and breaking API and/or syntax changes.
 </blockquote>
 
 **Ore** is a runtime capable string templating engine
@@ -67,4 +66,19 @@ is one
 
 <h2 style="text-align: center">Usage</h2>
 
-WIP: currently there is no way to use it, still very early in development. Come back later.
+Here goes a basic usage example:
+
+```nim
+import ore
+
+# create OreContext
+var ctx = initOreContext()
+
+# Set some variables
+ctx.defines:
+  a = 42
+
+echo ctx.renderString("Quick math! 2 + 2 = {{ 2 + 2 }}")
+echo ctx.renderString("a = {{ a }}")
+echo ctx.renderFile("path/to/myTemplate.ore")
+```
