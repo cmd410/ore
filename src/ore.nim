@@ -4,7 +4,6 @@ import math
 import tables
 import macros
 import options
-import segfaults
 
 type
   CodePos* = tuple[offset, line, col: int]
@@ -194,9 +193,9 @@ func humanRepr*(tk: Token): string =
 
 type
   LexState* = enum
-    lexText
-    lexExpr
-    lexStmt
+    lexStateText
+    lexStateExpr
+    lexStateStmt
 
   Lexer* = object
     ## Lexer - the most low-level part of this machine.
@@ -206,8 +205,8 @@ type
       ## Lexer can be in one state at a time.
       ## State changes how tokens are produced in `getNextToken`
       ## 
-      ## - `lexText` - assumes all text encountered until expr delimiter is unquoted string
-      ## - `lexExpr` and `lexStmt` - parse code inside expression and statement blocks.
+      ## - `lexStateText` - assumes all text encountered until expr delimiter is unquoted string
+      ## - `lexStateExpr` and `lexStateStmt` - parse code inside expression and statement blocks.
       ##    Ignores whitespaces.
     input*: string
     cChar*: char
@@ -244,7 +243,7 @@ func initLexer*(input: string): Lexer =
   ## Create lexer for given text
   result = Lexer(
     pos: (-1, 1, 0),
-    state: lexText,
+    state: lexStateText,
     input: input,
     cChar: '\0',
     exprPos: none[int](),
@@ -367,7 +366,7 @@ func tokenizeExpr(lex: var Lexer): Token =
       ## Check for closing }, if present - leave expression
       if lex.peek == '}':
         lex.advance()
-        lex.state = lexText
+        lex.state = lexStateText
         lex.exprPos = none[int]()
         return pos.initToken(t)
     
@@ -419,7 +418,7 @@ func getNextToken*(lex: var Lexer): Token =
   lex.defState = none[LexState]()
 
   case lex.state
-  of lexText:
+  of lexStateText:
     let pos = lex.pos
     var
       text = ""
@@ -429,11 +428,11 @@ func getNextToken*(lex: var Lexer): Token =
       of '{':  # Entering code block?
         case lex.peek
         of '{':  # expression block perhaps?
-          lex.defState = lexExpr.some
+          lex.defState = lexStateExpr.some
           lex.exprPos = -1.some
           break
         of '%':
-          lex.defState = lexStmt.some
+          lex.defState = lexStateStmt.some
           lex.exprPos = -1.some
           break
         else:  # Nope, no expression here treat as normal char
@@ -445,9 +444,9 @@ func getNextToken*(lex: var Lexer): Token =
       c = lex.advance()
     result = pos.initToken(text, false)
 
-  of lexExpr:
+  of lexStateExpr:
     result = lex.tokenizeExpr()
-  of lexStmt:
+  of lexStateStmt:
     result = lex.tokenizeExpr()
   lex.advance()
 
@@ -574,15 +573,23 @@ func isConst*(n: Node): bool =
   of ndSetVar: discard
 
 type
+  ParseState* = enum
+    parseStateQuit
+    parseStateText
+    parseStateExpr
+    parseStateStmt
+
   Parser* = object
     ## Parser builds AST
     ## based on lexer-provided tokens
     lex*: Lexer
     cTok*: Token
+    state*: ParseState
 
 func initParser*(s: string): Parser =
   Parser(
-    lex: initLexer(s)
+    lex: initLexer(s),
+    state: parseStateText
   )
 
 proc advance*(p: var Parser): Token {.discardable.} =
@@ -772,22 +779,24 @@ proc parseBlock*(p: var Parser, tillStmt: static[string] = ""): Node =
   else:
     p.advance()  # ew
 
-  while not p.lex.isFinished():
-    var state = p.lexState()
-    case state:
-    of lexText:
+  while true:
+
+    case p.state:
+    of parseStateQuit: break
+    of parseStateText:
       let tok = p.eatToken({tkStr})
       result.rope.add Node(
         kind: ndValue,
         value: tok
       )
 
-    of lexExpr:
+    of parseStateExpr:
       p.eatToken({tkExprStart})
       result.rope.add p.parseExpression()
       p.eatToken({tkExprEnd})
+      p.state = parseStateText
     
-    of lexStmt:
+    of parseStateStmt:
       p.eatToken({tkStmtStart})
 
       let stmtStart = p.eatToken({tkVar})
@@ -796,13 +805,15 @@ proc parseBlock*(p: var Parser, tillStmt: static[string] = ""): Node =
         let idTok = p.eatToken({tkVar})
         p.eatOperator({opEq})
         let valNode = p.parseExpression()
+        p.eatToken({tkStmtEnd})
+        p.state = parseStateText
         let node = Node(kind: ndSetVar, varName: idTok, varValue: valNode)
         result.rope.add node
-        p.eatToken({tkStmtEnd})
       
       of "block":
         let idTok = p.eatToken({tkVar})
         p.eatToken({tkStmtEnd})
+        p.state = parseStateText
         var blockNode = p.parseBlock("endblock")
         blockNode.nameTok = idTok
         result.rope.add blockNode
@@ -810,6 +821,7 @@ proc parseBlock*(p: var Parser, tillStmt: static[string] = ""): Node =
       of "if":
         var conditionNode = p.parseExpression()
         p.eatToken({tkStmtEnd})
+        p.state = parseStateText
         var
           node = p.parseBlock("endif")
         node.conditionNode = conditionNode
@@ -821,6 +833,7 @@ proc parseBlock*(p: var Parser, tillStmt: static[string] = ""): Node =
           p.assertRule(false, p.cTok.pos, "else statement outside of if block")
         else:
           p.eatToken({tkStmtEnd})
+          p.state = parseStateText
           let elseBlock = p.parseBlock("endif")
           elseBlock.conditionNode = Node(kind: ndValue, value: p.lex.pos.initToken(true))
           endWordMet = true
@@ -832,6 +845,7 @@ proc parseBlock*(p: var Parser, tillStmt: static[string] = ""): Node =
         else:
           var conditionNode = p.parseExpression()
           p.eatToken({tkStmtEnd})
+          p.state = parseStateText
           let elseBlock = p.parseBlock("endif")
           elseBlock.conditionNode = conditionNode
           endWordMet = true
@@ -841,18 +855,31 @@ proc parseBlock*(p: var Parser, tillStmt: static[string] = ""): Node =
         when tillStmt != "":
           endWordMet = true
           p.eatToken({tkStmtEnd})
+          p.state = parseStateText
+          break
         else: result.unreacahble()
       else:
         raise OreError.newException:
           fmt"Unknown statement '{stmtStart}' at {stmtStart.pos.humanRepr}"
-
-  when tillStmt != "":
+      p.state = parseStateText
+    
+    case p.cTok.kind
+    of tkExprStart:
+      p.state = parseStateExpr
+    of tkStmtStart:
+      p.state = parseStateStmt
+    of tkEof:
+      p.state = parseStateQuit
+    else: discard
+  
+  when tillStmt == "": discard
+  elif tillStmt == "endif":
+    result = ifBlock
+  else:
     p.assertRule(
       endWordMet, p.lex.pos,
       "Block needs to be closed with '{% " & tillStmt & " %}' statement, yet block ended abruptly"
     )
-    when tillStmt == "endif":
-      result = ifBlock
 
 
 type

@@ -10,20 +10,20 @@ suite "Test lexer":
   test "Test Simple":
     var lex = initLexer(inputSimple)
     const result = [
-      (tkStr, lexText),
-      (tkStmtStart, lexStmt),
-      (tkVar, lexStmt),
-      (tkVar, lexStmt),
-      (tkOperator, lexStmt),
-      (tkInt, lexStmt),
-      (tkStmtEnd, lexText),
-      (tkStr, lexText),
-      (tkExprStart, lexExpr),
-      (tkInt, lexExpr),
-      (tkOperator, lexExpr),
-      (tkVar, lexExpr),
-      (tkExprEnd, lexText),
-      (tkStr, lexText)
+      (tkStr, lexStateText),
+      (tkStmtStart, lexStateStmt),
+      (tkVar, lexStateStmt),
+      (tkVar, lexStateStmt),
+      (tkOperator, lexStateStmt),
+      (tkInt, lexStateStmt),
+      (tkStmtEnd, lexStateText),
+      (tkStr, lexStateText),
+      (tkExprStart, lexStateExpr),
+      (tkInt, lexStateExpr),
+      (tkOperator, lexStateExpr),
+      (tkVar, lexStateExpr),
+      (tkExprEnd, lexStateText),
+      (tkStr, lexStateText)
     ]
     var i = 0
     while not lex.isFinished():
@@ -55,4 +55,4 @@ suite "Test engine":
 
   test "Test file":
     var e = initOreEngine()
-    echo e.renderFile("tests/templates/simple.ore")
+    check e.renderFile("tests/templates/simple.ore") == "Hello, world!"
