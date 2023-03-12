@@ -9,7 +9,57 @@
 # See the GNU Lesser General Public License for more details.
 #
 # You should have received a copy of the GNU Lesser General Public License
-# along with this program. If not, see <https://www.gnu.org/licenses/>. 
+# along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+## **Ore** is a runtime capable string templating engine for nim language.
+## 
+## Template syntax looks like this:
+## ```jinja
+## # insert expression
+## 2 + 2 = {{ 2 + 2 * a }}
+## 
+## # define variables
+## {% set variable = 42 %}
+## 
+## # Template inheritance
+## {% extend "path/to/other.ore" %}  
+## 
+## # named blocks
+## {% block name %}   
+## {% endblock %}
+## 
+## # conditional blocks
+## {% if condition %}
+## {% elif other_condition %}
+## {% else %}
+## {% endif %}
+## 
+## # for loop blocks (WIP)
+## {% for i in iterator %}
+## {% endfor %}
+## 
+## # while loop blocks (WIP)
+## {% while condition %}
+## {% endwhile %}
+## 
+## # Template composition (WIP)
+## {% insert "path/to/other.ore" arg1=1 arg2="hello" %}
+## 
+## # Space control
+## this {>}
+## is one
+## {<} line
+## ```
+runnableExamples:
+  var ctx = initOreContext()
+
+  ctx.defines:
+    # assign variable `a`
+    a = 42
+
+  echo ctx.renderString("Quick math! 2 + 2 = {{ 2 + 2 }}")
+  echo ctx.renderFile("tests/templates/simple.ore")
+
 
 import strformat
 import strutils
@@ -20,9 +70,9 @@ import options
 import os
 
 type
-  CodePos* = tuple[offset, line, col: int]
+  CodePos = tuple[offset, line, col: int]
 
-  TokenKind* = enum
+  TokenKind = enum
     tkEof
     
     tkOperator
@@ -34,7 +84,7 @@ type
     tkStmtStart, tkStmtEnd  ## {% and %}
     tkBracket
   
-  OperatorKind* = enum
+  OperatorKind = enum
     opDot,
     opPlus, opMinus
     opMult, opDivide
@@ -42,11 +92,11 @@ type
     # =     ==        <        >         <=        >=
     opEq, opCmpEq, opCmpLs, opCmpGt, opCmpEqLs, opCmpEqGt
 
-  BracketKind* = enum
+  BracketKind = enum
     brLParen, brRParen,
     brLBrack, brRBrack
 
-  Token* = object
+  Token = object
     pos: CodePos
     
     case kind*: TokenKind
@@ -70,12 +120,12 @@ type
 
 
 # Enum to string conversions
-const brKindToStr*: array[BracketKind, string] = ["(", ")", "[", "]"]
-const opKindToStr*: array[OperatorKind, string] = [".", "+", "-", "*", "/", "&", "=", "==", "<", ">", "<=", ">="]
-const opToPrecendece*: array[OperatorKind, int] = [ 10,  8,   8,   9,   9,   7 ,  1,   5,    5,   5,   5,    5  ]
+const brKindToStr: array[BracketKind, string] = ["(", ")", "[", "]"]
+const opKindToStr: array[OperatorKind, string] = [".", "+", "-", "*", "/", "&", "=", "==", "<", ">", "<=", ">="]
+const opToPrecendece: array[OperatorKind, int] = [ 10,  8,   8,   9,   9,   7 ,  1,   5,    5,   5,   5,    5  ]
 
 
-func initToken*(pos: CodePos, kind: static[TokenKind]): Token =
+func initToken(pos: CodePos, kind: static[TokenKind]): Token =
   ## Create valueless token, only accepts valueless token kinds
   when kind notin {tkEof, tkExprStart, tkExprEnd, tkStmtStart, tkStmtEnd}:
     {.error: "Only valueless token kinds are acceptable in this constructor".}
@@ -84,7 +134,7 @@ func initToken*(pos: CodePos, kind: static[TokenKind]): Token =
     kind: kind
   )
 
-func initToken*(pos: CodePos, brKind: BracketKind): Token =
+func initToken(pos: CodePos, brKind: BracketKind): Token =
   ## Create bracket token
   Token(
     pos: pos,
@@ -92,7 +142,7 @@ func initToken*(pos: CodePos, brKind: BracketKind): Token =
     brKind: brKind
   )
 
-func initToken*(pos: CodePos, opKind: OperatorKind): Token =
+func initToken(pos: CodePos, opKind: OperatorKind): Token =
   ## Create opearator token
   Token(
     pos: pos,
@@ -100,7 +150,7 @@ func initToken*(pos: CodePos, opKind: OperatorKind): Token =
     opKind: opKind
   )
 
-func initToken*(pos: CodePos, value: string, quoted: bool, kind: static[TokenKind] = tkStr): Token =
+func initToken(pos: CodePos, value: string, quoted: bool, kind: static[TokenKind] = tkStr): Token =
   ## Create token from string value given.
   ## Valid kinds are tkStr and tkVar
   when kind notin {tkStr, tkVar}:
@@ -112,7 +162,7 @@ func initToken*(pos: CodePos, value: string, quoted: bool, kind: static[TokenKin
     quoted: quoted
   )
 
-func initToken*(pos: CodePos, value: int): Token =
+func initToken(pos: CodePos, value: int): Token =
   ## Create token from integer value
   Token(
     pos: pos,
@@ -120,7 +170,7 @@ func initToken*(pos: CodePos, value: int): Token =
     intValue: value
   )
 
-func initToken*(pos: CodePos, value: float): Token =
+func initToken(pos: CodePos, value: float): Token =
   ## Create token from float value
   Token(
     pos: pos,
@@ -128,7 +178,7 @@ func initToken*(pos: CodePos, value: float): Token =
     floatValue: value
   )
 
-func initToken*(pos: CodePos, value: bool): Token =
+func initToken(pos: CodePos, value: bool): Token =
   ## Create token from boolean value
   Token(
     pos: pos,
@@ -166,13 +216,13 @@ func `$`*(tk: Token): string =
   of tkStmtEnd:
     result = "%}"
 
-func humanRepr*(pos: CodePos): string =
+func humanRepr(pos: CodePos): string =
   if pos.offset < 0:
     "unknown location"
   else:
     fmt"line {pos.line}, col {pos.col} (offset: {pos.offset})"
 
-func humanRepr*(tk: Token): string =
+func humanRepr(tk: Token): string =
   ## Get descriptive, yet human-readable string representation of token
   result = "Token: "
   case tk.kind
@@ -206,12 +256,12 @@ func humanRepr*(tk: Token): string =
 
 
 type
-  LexState* = enum
+  LexState = enum
     lexStateText
     lexStateExpr
     lexStateStmt
 
-  Lexer* = object
+  Lexer = object
     ## Lexer - the most low-level part of this machine.
     ## It's only job is to turn text input into parser-digestable tokens
     pos*: CodePos
@@ -231,7 +281,7 @@ type
       ## When in encounters with expr delimiters
 
 
-proc advance*(lex: var Lexer): char {.discardable.} =
+proc advance(lex: var Lexer): char {.discardable.} =
   ## Advance lexer by one char
   lex.pos.offset += 1
 
@@ -253,7 +303,7 @@ proc advance*(lex: var Lexer): char {.discardable.} =
   return lex.cChar
 
 
-func initLexer*(input: string): Lexer =
+func initLexer(input: string): Lexer =
   ## Create lexer for given text
   result = Lexer(
     pos: (-1, 1, 0),
@@ -266,12 +316,7 @@ func initLexer*(input: string): Lexer =
   result.advance()
 
 
-func isFinished*(lex: Lexer): bool =
-  ## Whether lexer has reached end of file.
-  (lex.input.high == -1) or (lex.pos.offset > lex.input.high)
-
-
-func peek*(lex: Lexer, offset: int = 1): char =
+func peek(lex: Lexer, offset: int = 1): char =
   ## Return char that is offset characters away from current
   let pos = lex.pos.offset + offset
 
@@ -421,7 +466,7 @@ func tokenizeExpr(lex: var Lexer): Token =
       return
 
 
-func getNextToken*(lex: var Lexer): Token =
+func getNextToken(lex: var Lexer): Token =
   ## Parse next token
   var c = lex.cChar
 
@@ -483,7 +528,7 @@ func getNextToken*(lex: var Lexer): Token =
 
 
 type
-  NodeKind* = enum
+  NodeKind = enum
     ndNoOp
     ndValue
     ndRope
@@ -493,7 +538,7 @@ type
     ndIfBlock
     ndExtends
 
-  Node* = ref object
+  Node = ref object
     ## Node is base unit of AST
     ## generated by `Parser`
     precedence*: int
@@ -517,7 +562,7 @@ type
       otherNode*: Node
 
 
-func getNodePos*(n: Node): CodePos =
+func getNodePos(n: Node): CodePos =
   ## Attempt to get position in code given node
   ## originates from
   if n == nil: return (-1, -1, -1)
@@ -529,7 +574,7 @@ func getNodePos*(n: Node): CodePos =
   else:
     result = n.origin.pos
 
-func treeRepr*(n: Node, indent: int = 0): string =
+func treeRepr(n: Node, indent: int = 0): string =
   ## Return a tree string representation of node
   result = indent.spaces & "| "
   if n == nil:
@@ -568,7 +613,7 @@ func treeRepr*(n: Node, indent: int = 0): string =
   of ndExtends:
     result &= "Extends:\n" & n.otherNode.treeRepr(indent + deltaIndent)
 
-func isConst*(n: Node): bool =
+func isConst(n: Node): bool =
   ## Check if node can be evaluated
   ## without any external
   result = false
@@ -597,20 +642,20 @@ func isConst*(n: Node): bool =
     result = false
 
 type
-  ParseState* = enum
+  ParseState = enum
     parseStateQuit
     parseStateText
     parseStateExpr
     parseStateStmt
 
-  Parser* = object
+  Parser = object
     ## Parser builds AST
     ## based on lexer-provided tokens
     lex*: Lexer
     cTok*: Token
     state*: ParseState
 
-func initParser*(s: string): Parser =
+func initParser(s: string): Parser =
   Parser(
     lex: initLexer(s),
     state: parseStateText
@@ -622,11 +667,11 @@ template assertRule(p: Parser, rule: untyped, pos: CodePos, message: string = "u
   if not rule:
     raise OreError.newException: "Syntax error: " & message & " at " & $pos.humanRepr
 
-proc advance*(p: var Parser): Token {.discardable.} =
+proc advance(p: var Parser): Token {.discardable.} =
   p.cTok = p.lex.getNextToken()
   p.cTok
 
-proc eatToken*(p: var Parser, kinds: set[TokenKind]): Token {.discardable.} =
+proc eatToken(p: var Parser, kinds: set[TokenKind]): Token {.discardable.} =
   ## Confirm that current token is one of given kinds, and advances the parser
   ## otherwise, raise OreError.
   ## 
@@ -636,7 +681,7 @@ proc eatToken*(p: var Parser, kinds: set[TokenKind]): Token {.discardable.} =
     "Unexpected token at " & result.pos.humanRepr & ". Expected " & $kinds & ", got " & $result.kind & " instead"
   discard p.advance()
 
-proc eatOperator*(p: var Parser, opKinds: set[OperatorKind]): Token {.discardable.} =
+proc eatOperator(p: var Parser, opKinds: set[OperatorKind]): Token {.discardable.} =
   ## Confirm that current token is an operator and one of specific kinds of operators
   ## if not raise OreError.
   result = p.eatToken({tkOperator})
@@ -653,7 +698,7 @@ proc unreachable() =
       "https://github.com/cmd410/ore/issues"
     )
 
-proc parseExpression*(p: var Parser): Node =
+proc parseExpression(p: var Parser): Node =
   # BEHOLD, recursiveless recursive descent expression parsing
   var tok = p.cTok
   var subExprStack: seq[Node]
@@ -764,7 +809,7 @@ proc parseExpression*(p: var Parser): Node =
     else: unreachable()
     tok = p.advance()
 
-proc parseBlock*(p: var Parser, tillStmt: static[string] = ""): Node =
+proc parseBlock(p: var Parser, tillStmt: static[string] = ""): Node =
   ## Parse block of code untill `tillStmt` statement is ecnountered,
   ## if none given parses till EoF.
   ## 
@@ -904,7 +949,7 @@ type
 
   Variant* = object
     ## This object represents a variable inside OreEngine
-    origin: Node 
+    origin*: Node 
       ## AST node that produced this value
       ## either value or expression 
     case kind*: VariantKind
@@ -920,9 +965,14 @@ type
 
 
 func null*(s:typedesc[Variant], origin: Node = nil): Variant =
+  ## Return Null variant value
+  ## 
+  ## Origin is an AST Node that produced this value
   Variant(kind: varNull, origin: origin)
 func toVariant*[T](v: T, origin: Node = nil): Variant =
   ## Convert given value to variant
+  ## 
+  ## Origin is an AST Node that produced this value
   when T is Token:
     case v.kind
     of tkStr:
@@ -936,16 +986,18 @@ func toVariant*[T](v: T, origin: Node = nil): Variant =
     else:
       raise OreError.newException:
         fmt"Can't convert token {v.kind} to variant at {v.pos.humanRepr}"
-  elif T is    int: result = Variant(kind: varInt,   intValue:   v, origin: origin)
-  elif T is  float: result = Variant(kind: varFloat, floatValue: v, origin: origin)
-  elif T is string: result = Variant(kind: varStr,   strValue:   v, origin: origin)
-  elif T is   bool: result = Variant(kind: varBool,  boolValue:  v, origin: origin)
+  elif T is     int: result = Variant(kind: varInt,   intValue:   v, origin: origin)
+  elif T is   float: result = Variant(kind: varFloat, floatValue: v, origin: origin)
+  elif T is  string: result = Variant(kind: varStr,   strValue:   v, origin: origin)
+  elif T is    bool: result = Variant(kind: varBool,  boolValue:  v, origin: origin)
+  elif T is Variant: result = v
   else: {.error: "Unsupported type for conversion to Variant: " & $T.}
 
-template everyKind(val: Variant, name, body, onNull: untyped): untyped =
-  ## Assign variant value to name
-  ## and do body for each branch
-  ## Except varNull, varNull does onNull branch
+template everyKind*(val: Variant, name, body, onNull: untyped): untyped =
+  ## Utility template.
+  ## Assigns variant value to `name`
+  ## and does `body` for each branch.
+  ## Except `varNull`, `varNull` does `onNull` branch
   case val.kind
   of varInt:
     let name = val.intValue
@@ -976,10 +1028,11 @@ func humanRepr*(v: Variant): string =
   of varBool:
     result &= fmt"(bool {v.boolValue})"
 
-template everyKind(val: Variant, name, body: untyped): untyped =
-  ## Assign variant value to name
-  ## and do body for each branch
-  ## Except varNull, varNull is discarded
+template everyKind*(val: Variant, name, body: untyped): untyped =
+  ## Utility template.
+  ## Assigns variant value to `name`
+  ## and does `body` for each branch.
+  ## Except `varNull`, `varNull` is discarded
   val.everyKind(name):
     body
   do: discard
@@ -1001,7 +1054,7 @@ macro genBinOp(opName: untyped) =
   let opStr = $opName
   result = quote do:
     func `opName`*(a, b: Variant, op: Node = nil): Variant =
-      
+      ## Implementation of operator for Variant type
       a.everyKind(x):
         b.everyKind(y):
           when typeof(x) is typeof(y): tryReturn(`opName`(x,           y ).toVariant(op))
@@ -1072,14 +1125,7 @@ type
     ctx*: OreContext
     path*: string
     blockOverrides*: Table[string, Node]
-    variables*: Table[string, Variant]
-
-  OreFileHandler* = object
-    ctx*: OreContext
-
-  OreEngine* = object
-    globalContext*: OreContext
-    files*: Table[string, OreFileHandler]
+    variables: Table[string, Variant]
 
 func initOreContext*(ctx: OreContext = nil, path: string = ""): OreContext =
   result = OreContext(
@@ -1087,17 +1133,6 @@ func initOreContext*(ctx: OreContext = nil, path: string = ""): OreContext =
     path: path,
     variables: initTable[string, Variant]()
   )
-
-func initOreEngine*(): OreEngine =
-  OreEngine(
-    globalContext: initOreContext()
-  )
-
-func initOreFileHandler*(e: var OreEngine, filepath: string): OreFileHandler =
-  result = OreFileHandler(
-    ctx: initOreContext(ctx=e.globalContext, path=filepath)
-  )
-  e.files[filepath] = result
 
 proc setVar*(ctx: var OreContext, name: string, val: Variant) =
   ## Set variable in ore context
@@ -1113,14 +1148,35 @@ proc getVar*(ctx: OreContext, name: string): Variant =
   else:
     ctx.ctx.getVar(name)
 
-proc getBlockOverride*(ctx: OreContext, name: string, default: Node = nil): Node =
+macro defines*(e: var OreContext, body: untyped): untyped =
+  ## Assign variables in engine context
+  runnableExamples:
+    var engine = initOreContext()
+    engine.defines:
+      a = 2
+      b = 6
+    echo engine.renderString("{{ a * b }}")  # 12
+
+  result = newStmtList()
+  body.expectKind(nnkStmtList)
+  for i in body:
+    case i.kind
+    of nnkAsgn:
+      var name = $i[0]
+      var value = i[1]
+      result.add quote do:
+        `e`.setVar(`name`, `value`.toVariant())
+    of nnkCommentStmt: discard
+    else: "Not an assignment.".error(i)
+
+proc getBlockOverride(ctx: OreContext, name: string, default: Node = nil): Node =
   if ctx == nil: return default
   if name in ctx.blockOverrides:
     result = ctx.blockOverrides[name]
   else:
     result = ctx.ctx.getBlockOverride(name, default)
 
-proc applyBlockOverride*(ctx: var OreContext, name: string) =
+proc applyBlockOverride(ctx: var OreContext, name: string) =
   if ctx == nil: return
   if name in ctx.blockOverrides:
     ctx.blockOverrides[name] = nil
@@ -1216,15 +1272,17 @@ proc parseString(ctx: var OreContext, input: string): Node =
           ctx.blockOverrides[blockName] = i
     else: discard
 
-proc renderNode*(ctx: var OreContext, node: Node): string =
+proc renderNode(ctx: var OreContext, node: Node): string =
   ## Evaluate given node to string 
   if node == nil: return ""
   case node.kind
   of ndNoOp: discard
+  
   of ndRope:
     for i in node.rope.low..node.rope.high:
       let el = node.rope[i]
       case el.kind
+      
       of ndExtends:
         doAssert el.otherNode.isConst()
         let otherVar = ctx.evalExpression(el.otherNode)
@@ -1232,11 +1290,13 @@ proc renderNode*(ctx: var OreContext, node: Node): string =
         let filepath = ctx.path /../ $otherVar
         var subCtx = ctx.initOreContext(filepath)
         node.rope[i] = subCtx.parseString(filepath.readFile())
+      
       of ndRope:
         if el.origin.kind == tkVar:
           let blockName = el.origin.strValue
           node.rope[i] = ctx.getBlockOverride(blockName, el)
           ctx.applyBlockOverride(blockName)
+      
       else: discard
       result &= ctx.renderNode(node.rope[i])
 
@@ -1249,21 +1309,22 @@ proc renderNode*(ctx: var OreContext, node: Node): string =
       node.origin.strValue,
       ctx.evalExpression(node.varValue)
     )
+  
   of ndIfBlock:
     let condition = ctx.evalExpression(node.conditionNode)
     if condition.isTruthy():
       result &= ctx.renderNode(node.truePath)
     else:
       result &= ctx.renderNode(node.falsePath)
+  
+  # all extends nodes should be eliminated at this point
   of ndExtends: unreachable()
 
 proc renderString*(ctx: var OreContext, input: string): string =
   var parsed = ctx.parseString(input)
   result = ctx.renderNode(parsed)
 
-proc renderString*(e: var OreEngine, input: string): string =
-  result = e.globalContext.renderString(input)
-
-proc renderFile*(e: var OreEngine, filepath: string): string =
-  var fh = e.initOreFileHandler(filepath)
-  result = fh.ctx.renderString(fh.ctx.path.readFile())
+proc renderFile*(ctx: var OreContext, filepath: string): string =
+  let input = readFile(filepath)
+  var subCtx = ctx.initOreContext(filepath)
+  subCtx.renderString(input)

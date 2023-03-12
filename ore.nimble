@@ -10,3 +10,8 @@ srcDir        = "src"
 # Dependencies
 
 requires "nim >= 1.6.8"
+
+
+task docs, "Generate documentation":
+  exec "nimble test"
+  exec "nim doc --path:src --project --index:on --outdir:docs --git.url:https://github.com/cmd410/ore --git.commit:v" & version & " src/ore.nim"
