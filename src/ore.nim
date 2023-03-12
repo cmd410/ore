@@ -4,6 +4,7 @@ import math
 import tables
 import macros
 import options
+import os
 
 type
   CodePos* = tuple[offset, line, col: int]
@@ -460,6 +461,7 @@ type
     ndBinOp
     ndSetVar
     ndIfBlock
+    ndExtends
 
   Node* = ref object
     ## Node is base unit of AST
@@ -481,6 +483,8 @@ type
       conditionNode*: Node
       truePath*: Node
       falsePath*: Node
+    of ndExtends:
+      otherNode*: Node
 
 
 func getNodePos*(n: Node): CodePos =
@@ -531,6 +535,8 @@ func treeRepr*(n: Node, indent: int = 0): string =
     result &= n.conditionNode.treeRepr(indent + deltaIndent)
     result &= n.truePath.treeRepr(indent + deltaIndent)
     result &= n.falsePath.treeRepr(indent + deltaIndent)
+  of ndExtends:
+    result &= "Extends:\n" & n.otherNode.treeRepr(indent + deltaIndent)
 
 func isConst*(n: Node): bool =
   ## Check if node can be evaluated
@@ -542,6 +548,8 @@ func isConst*(n: Node): bool =
   of ndValue:
     result = n.origin.kind != tkVar
   of ndRope:
+    if n.origin.kind == tkVar:
+      return false  # Named blocks never constant
     result = true
     for i in n.rope:
       result = result and i.isConst()
@@ -555,6 +563,8 @@ func isConst*(n: Node): bool =
   of ndIfBlock:
     result = n.conditionNode.isConst()
   of ndSetVar: discard
+  of ndExtends:
+    result = false
 
 type
   ParseState* = enum
@@ -775,7 +785,6 @@ proc parseBlock*(p: var Parser, tillStmt: static[string] = ""): Node =
         p.eatOperator({opEq})
         let valNode = p.parseExpression()
         p.eatToken({tkStmtEnd})
-        p.state = parseStateText
         let node = Node(kind: ndSetVar, origin: idTok, varValue: valNode)
         result.rope.add node
       
@@ -822,7 +831,11 @@ proc parseBlock*(p: var Parser, tillStmt: static[string] = ""): Node =
           elifBlock.conditionNode = conditionNode
           endWordMet = true
           ifBlock.falsePath = elifBlock
-
+      of "extends":
+        var other = p.parseExpression()
+        p.eatToken({tkStmtEnd})
+        var node = Node(kind: ndExtends, otherNode: other)
+        result.rope.add(node)
       of tillStmt:
         when tillStmt != "":
           endWordMet = true
@@ -1028,9 +1041,8 @@ type
   OreContext* = ref object
     ctx*: OreContext
     path*: string
-    deps*: seq[string]
     variables*: Table[string, Variant]
-  
+
   OreFileHandler* = object
     ctx*: OreContext
 
@@ -1143,13 +1155,30 @@ func evalExpression(ctx: OreContext, node: Node): Variant =
 
   else: unreachable()
 
+proc parseString(ctx: var OreContext, input: string): Node =
+  ## Parse given string.
+  ## Saturate context with data nessesary for string construction
+  var p = initParser(input)
+  result = p.parseBlock()
+
 proc renderNode*(ctx: var OreContext, node: Node): string =
   ## Evaluate given node to string 
   if node == nil: return ""
   case node.kind
+  of ndNoOp: discard
   of ndRope:
-    for i in node.rope:
-      result &= ctx.renderNode(i)
+    for i in node.rope.low..node.rope.high:
+      let el = node.rope[i]
+      
+      if el.kind == ndExtends:
+        doAssert el.otherNode.isConst()
+        let otherVar = ctx.evalExpression(el.otherNode)
+        doAssert otherVar.kind == varStr
+        let filepath = ctx.path /../ $otherVar
+        var subCtx = ctx.initOreContext(filepath)
+        node.rope[i] = subCtx.parseString(filepath.readFile())
+      
+      result &= ctx.renderNode(node.rope[i])
   of ndValue, ndUnOp, ndBinOp:
     result &= $ctx.evalExpression(node)
   of ndSetVar:
@@ -1164,15 +1193,7 @@ proc renderNode*(ctx: var OreContext, node: Node): string =
       result &= ctx.renderNode(node.truePath)
     else:
       result &= ctx.renderNode(node.falsePath)
-  else:
-      raise OreError.newException:
-        "Internal error"
-
-proc parseString(ctx: var OreContext, input: string): Node =
-  ## Parse given string.
-  ## Saturate context with data nessesary for string construction
-  var p = initParser(input)
-  result = p.parseBlock()
+  of ndExtends: unreachable()
 
 proc renderString*(ctx: var OreContext, input: string): string =
   var parsed = ctx.parseString(input)

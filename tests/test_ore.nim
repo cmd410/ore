@@ -56,3 +56,7 @@ suite "Test engine":
   test "Test file":
     var e = initOreEngine()
     check e.renderFile("tests/templates/simple.ore") == "Hello, world!"
+
+  test "Test extends":
+    var e = initOreEngine()
+    check e.renderFile("tests/templates/extends.ore") == "Hello, world!\n2 + 2 = 4"

@@ -1,0 +1,2 @@
+{% extends "simple.ore" %}
+2 + 2 = {{ 2 + 2 }}

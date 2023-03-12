@@ -35,7 +35,7 @@ Example:
 # define variables
 {% set variable = 42 %}
 
-# Template inheritance (WIP)
+# Template inheritance
 {% extend "path/to/other.ore" %}  
 
 # named blocks (WIP)
