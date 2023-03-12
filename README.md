@@ -38,7 +38,7 @@ Example:
 # Template inheritance
 {% extend "path/to/other.ore" %}  
 
-# named blocks (WIP)
+# named blocks
 {% block name %}   
 {% endblock %}
 

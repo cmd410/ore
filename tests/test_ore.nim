@@ -60,3 +60,7 @@ suite "Test engine":
   test "Test extends":
     var e = initOreEngine()
     check e.renderFile("tests/templates/extends.ore") == "Hello, world!\n2 + 2 = 4"
+
+  test "Block override":
+    var e = initOreEngine()
+    check e.renderFile("tests/templates/blockOverride.ore") == "Hello, Ore!\n"

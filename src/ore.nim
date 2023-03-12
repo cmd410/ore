@@ -1041,6 +1041,7 @@ type
   OreContext* = ref object
     ctx*: OreContext
     path*: string
+    blockOverrides*: Table[string, Node]
     variables*: Table[string, Variant]
 
   OreFileHandler* = object
@@ -1081,6 +1082,20 @@ proc getVar*(ctx: OreContext, name: string): Variant =
     ctx.variables[name]
   else:
     ctx.ctx.getVar(name)
+
+proc getBlockOverride*(ctx: OreContext, name: string, default: Node = nil): Node =
+  if ctx == nil: return default
+  if name in ctx.blockOverrides:
+    result = ctx.blockOverrides[name]
+  else:
+    result = ctx.ctx.getBlockOverride(name, default)
+
+proc applyBlockOverride*(ctx: var OreContext, name: string) =
+  if ctx == nil: return
+  if name in ctx.blockOverrides:
+    ctx.blockOverrides[name] = nil
+  else:
+    ctx.ctx.applyBlockOverride(name)
 
 func evalExpression(ctx: OreContext, node: Node): Variant =
 
@@ -1160,6 +1175,15 @@ proc parseString(ctx: var OreContext, input: string): Node =
   ## Saturate context with data nessesary for string construction
   var p = initParser(input)
   result = p.parseBlock()
+  doAssert result.kind == ndRope
+  for i in result.rope:
+    case i.kind
+    of ndRope:
+      if i.origin.kind == tkVar:
+        let blockName = i.origin.strValue
+        if ctx.getBlockOverride(blockName) == nil:
+          ctx.blockOverrides[blockName] = i
+    else: discard
 
 proc renderNode*(ctx: var OreContext, node: Node): string =
   ## Evaluate given node to string 
@@ -1169,15 +1193,20 @@ proc renderNode*(ctx: var OreContext, node: Node): string =
   of ndRope:
     for i in node.rope.low..node.rope.high:
       let el = node.rope[i]
-      
-      if el.kind == ndExtends:
+      case el.kind
+      of ndExtends:
         doAssert el.otherNode.isConst()
         let otherVar = ctx.evalExpression(el.otherNode)
         doAssert otherVar.kind == varStr
         let filepath = ctx.path /../ $otherVar
         var subCtx = ctx.initOreContext(filepath)
         node.rope[i] = subCtx.parseString(filepath.readFile())
-      
+      of ndRope:
+        if el.origin.kind == tkVar:
+          let blockName = el.origin.strValue
+          node.rope[i] = ctx.getBlockOverride(blockName, el)
+          ctx.applyBlockOverride(blockName)
+      else: discard
       result &= ctx.renderNode(node.rope[i])
   of ndValue, ndUnOp, ndBinOp:
     result &= $ctx.evalExpression(node)
