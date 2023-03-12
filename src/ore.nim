@@ -449,6 +449,23 @@ func getNextToken*(lex: var Lexer): Token =
           lex.defState = lexStateStmt.some
           lex.exprPos = -1.some
           break
+        of '<', '>':
+          case lex.peek 2
+          of '}':
+            c = lex.advance()
+            let a = c
+            lex.advance()
+            c = lex.advance()
+            case a
+            of '<':
+              text = text.strip(leading=false, trailing=true)
+              continue
+            of '>':
+              c = lex.skipWhitespace()
+              continue
+            else: discard
+          else:
+            text &= c
         else:  # Nope, no expression here treat as normal char
           text &= c
       of '\0':
@@ -1192,6 +1209,7 @@ proc parseString(ctx: var OreContext, input: string): Node =
   for i in result.rope:
     case i.kind
     of ndRope:
+      # prepare named block overrides
       if i.origin.kind == tkVar:
         let blockName = i.origin.strValue
         if ctx.getBlockOverride(blockName) == nil:
@@ -1221,8 +1239,10 @@ proc renderNode*(ctx: var OreContext, node: Node): string =
           ctx.applyBlockOverride(blockName)
       else: discard
       result &= ctx.renderNode(node.rope[i])
+
   of ndValue, ndUnOp, ndBinOp:
     result &= $ctx.evalExpression(node)
+
   of ndSetVar:
     doAssert node.origin.kind == tkVar
     ctx.setVar(

@@ -58,6 +58,11 @@ Example:
 
 # Template composition (WIP)
 {% insert "path/to/other.ore" arg1=1 arg2="hello" %}
+
+# Space control
+this {>}
+is one
+{<} line
 ```
 
 <h2 style="text-align: center">Usage</h2>

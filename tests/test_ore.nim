@@ -53,6 +53,11 @@ suite "Test engine":
     var e = initOreEngine()
     check e.renderString(input) == "Now we can tell what is True and what is False"
 
+  test "Test space control":
+    const input = "this {>}\n  is one \n {<} line"
+    var e = initOreEngine()
+    check e.renderString(input) == "this is one line"
+
   test "Test file":
     var e = initOreEngine()
     check e.renderFile("tests/templates/simple.ore") == "Hello, world!"
