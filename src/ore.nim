@@ -4,6 +4,7 @@ import math
 import tables
 import macros
 import options
+import segfaults
 
 type
   CodePos* = tuple[offset, line, col: int]
@@ -487,12 +488,6 @@ type
       truePath*: Node
       falsePath*: Node
 
-  Parser* = object
-    ## Parser builds AST
-    ## based on lexer-provided tokens
-    lex*: Lexer
-    cTok*: Token
-
 
 func getNodePos*(n: Node): CodePos =
   ## Attempt to get position in code given node
@@ -515,7 +510,6 @@ func getNodePos*(n: Node): CodePos =
     result = n.conditionNode.getNodePos()
   else:
     result = (-1, -1, -1)
-
 
 func treeRepr*(n: Node, indent: int = 0): string =
   ## Return a tree string representation of node
@@ -579,19 +573,21 @@ func isConst*(n: Node): bool =
     result = n.conditionNode.isConst()
   of ndSetVar: discard
 
+type
+  Parser* = object
+    ## Parser builds AST
+    ## based on lexer-provided tokens
+    lex*: Lexer
+    cTok*: Token
 
 func initParser*(s: string): Parser =
   Parser(
     lex: initLexer(s)
   )
 
-func lexState*(p: var Parser): LexState {.inline.} = p.lex.state
-
-
 proc advance*(p: var Parser): Token {.discardable.} =
   p.cTok = p.lex.getNextToken()
   p.cTok
-
 
 proc eatToken*(p: var Parser, kinds: set[TokenKind]): Token {.discardable.} =
   ## Confirm that current token is one of given kinds, and advances the parser
@@ -605,7 +601,6 @@ proc eatToken*(p: var Parser, kinds: set[TokenKind]): Token {.discardable.} =
     raise OreError.newException:
       fmt"Unexpected token at {result.pos.humanRepr}. Expected {kinds}, got {result.kind}"
 
-
 proc eatOperator*(p: var Parser, opKinds: set[OperatorKind]): Token {.discardable.} =
   ## Confirm that current token is an operator and one of specific kinds of operators
   ## if not raise OreError.
@@ -613,7 +608,6 @@ proc eatOperator*(p: var Parser, opKinds: set[OperatorKind]): Token {.discardabl
   if not (result.opKind in opKinds):
     raise OreError.newException:
       fmt"Unexpected operator '{result.opKind}'. Expected {opKinds}."
-
 
 proc unreacahble(tree: Node) =
   ## Call on unreacahble? branches and other
@@ -626,7 +620,6 @@ proc unreacahble(tree: Node) =
       "Here's a tree representation of parsed tree so far, include it in report:\n" &
       tree.treeRepr() 
     )
-
 
 template assertRule(p: Parser,
                     rule: untyped,
@@ -642,7 +635,6 @@ template assertRule(p: Parser,
         message &
         " at " & $pos.humanRepr
       )
-
 
 proc parseExpression*(p: var Parser): Node =
   # BEHOLD, recursiveless recursive descent expression parsing
@@ -756,7 +748,6 @@ proc parseExpression*(p: var Parser): Node =
     else: result.unreacahble()
     tok = p.advance()
 
-
 proc parseBlock*(p: var Parser, tillStmt: static[string] = ""): Node =
   ## Parse block of code untill `tillStmt` statement is ecnountered,
   ## if none given parses till EoF.
@@ -785,9 +776,7 @@ proc parseBlock*(p: var Parser, tillStmt: static[string] = ""): Node =
     var state = p.lexState()
     case state:
     of lexText:
-      let tok = p.eatToken({tkStr, tkExprEnd})
-      if tok.kind == tkExprEnd: continue
-
+      let tok = p.eatToken({tkStr})
       result.rope.add Node(
         kind: ndValue,
         value: tok
@@ -802,7 +791,6 @@ proc parseBlock*(p: var Parser, tillStmt: static[string] = ""): Node =
       p.eatToken({tkStmtStart})
 
       let stmtStart = p.eatToken({tkVar})
-
       case stmtStart.strValue
       of "set":
         let idTok = p.eatToken({tkVar})
@@ -810,6 +798,8 @@ proc parseBlock*(p: var Parser, tillStmt: static[string] = ""): Node =
         let valNode = p.parseExpression()
         let node = Node(kind: ndSetVar, varName: idTok, varValue: valNode)
         result.rope.add node
+        p.eatToken({tkStmtEnd})
+      
       of "block":
         let idTok = p.eatToken({tkVar})
         p.eatToken({tkStmtEnd})
@@ -835,7 +825,6 @@ proc parseBlock*(p: var Parser, tillStmt: static[string] = ""): Node =
           elseBlock.conditionNode = Node(kind: ndValue, value: p.lex.pos.initToken(true))
           endWordMet = true
           ifBlock.falsePath = elseBlock
-          break
       
       of "elif":
         when tillStmt != "endif":
@@ -847,18 +836,16 @@ proc parseBlock*(p: var Parser, tillStmt: static[string] = ""): Node =
           elseBlock.conditionNode = conditionNode
           endWordMet = true
           ifBlock.falsePath = elseBlock
-          break
 
       of tillStmt:
         when tillStmt != "":
           endWordMet = true
-          break
+          p.eatToken({tkStmtEnd})
         else: result.unreacahble()
       else:
         raise OreError.newException:
           fmt"Unknown statement '{stmtStart}' at {stmtStart.pos.humanRepr}"
 
-      p.eatToken({tkStmtEnd})
   when tillStmt != "":
     p.assertRule(
       endWordMet, p.lex.pos,
@@ -874,36 +861,24 @@ type
     varInt, varFloat, varStr, varBool
 
   Variant* = object
-    ## This object represents a variable inside
-    ## OreEngine context
+    ## This object represents a variable inside OreEngine
     case kind*: VariantKind
     of varNull: discard
     of varInt:
-      vintVal*: int
+      intValue*: int
     of varFloat:
-      vfloatVal*: float
+      floatValue*: float
     of varStr:
-      vstrVal*: string
+      strValue*: string
     of varBool:
-      vboolVal*: bool
-  
-  OreContext* = object
-    variables*: Table[string, Variant]
-  
-  OreFileHandler* = object
-    path*: string
-    deps*: seq[string]  ## Other files current file depends on
-    ctx*: OreContext
-
-  OreEngine* = object
-    globalContext*: OreContext
+      boolValue*: bool
 
 
 func null*(s:typedesc[Variant]): Variant = Variant(kind: varNull)
-func toVariant*(v: int): Variant = Variant(kind: varInt, vintVal: v)
-func toVariant*(v: float): Variant = Variant(kind: varFloat, vfloatVal: v)
-func toVariant*(v: string): Variant = Variant(kind: varStr, vstrVal: v)
-func toVariant*(v: bool): Variant = Variant(kind: varBool, vboolVal: v)
+func toVariant*(v: int): Variant = Variant(kind: varInt, intValue: v)
+func toVariant*(v: float): Variant = Variant(kind: varFloat, floatValue: v)
+func toVariant*(v: string): Variant = Variant(kind: varStr, strValue: v)
+func toVariant*(v: bool): Variant = Variant(kind: varBool, boolValue: v)
 func toVariant*(v: Token): Variant =
   template error() =
     raise OreError.newException:
@@ -921,83 +896,69 @@ func toVariant*(v: Token): Variant =
   else:
     error()
 
-
 func humanRepr*(v: Variant): string =
   result = "Variant"
   case v.kind
   of varNull:
     result &= "(null)"
   of varInt:
-    result &= fmt"(int {v.vintVal})"
+    result &= fmt"(int {v.intValue})"
   of varFloat:
-    result &= fmt"(float {v.vfloatVal})"
+    result &= fmt"(float {v.floatValue})"
   of varStr:
-    result &= fmt"(string {v.vstrVal.escape})"
+    result &= fmt"(string {v.strValue.escape})"
   of varBool:
-    result &= fmt"(bool {v.vboolVal})"
-
+    result &= fmt"(bool {v.boolValue})"
 
 func `$`*(v: Variant): string =
   case v.kind
   of varNull:
     result = "null"
   of varInt:
-    result = $v.vintVal
+    result = $v.intValue
   of varFloat:
-    result = $v.vfloatVal
+    result = $v.floatValue
   of varStr:
-    result = $v.vstrVal
+    result = $v.strValue
   of varBool:
-    result = $v.vboolVal
-  
+    result = $v.boolValue
 
-func initOreEngine*(): OreEngine =
-  OreEngine()
-
-proc setVar*(ctx: var OreContext, name: string, val: Variant) =
-  ## Set variable in ore context
-  ctx.variables[name] = val
-
-proc getVar*(ctx: OreContext, name: string): Variant =
-  ## Get variable in ore context, if doesn't exist
-  ## returns Variant.null
-  ctx.variables.getOrDefault(name, Variant.null)
-
-
-template multiRoute(val: Variant, name, body: untyped): untyped =
+template everyKind(val: Variant, name, body: untyped): untyped =
   ## Assign variant value to name
   ## and do body for each branch
   case val.kind
   of varInt:
-    let name = val.vintVal
+    let name = val.intValue
     body
   of varFloat:
-    let name = val.vfloatVal
+    let name = val.floatValue
     body
   of varBool:
-    let name = val.vboolVal
+    let name = val.boolValue
     body
   of varStr:
-    let name = val.vstrVal
+    let name = val.strValue
     body
-  else: discard
+  of varNull: discard
 
-template tryOp(op: untyped) =
+template tryReturn(op: untyped) =
+  ## If the op compiles, return it
   when compiles(op):
     return op.toVariant()
 
 macro genBinOp(opName: untyped) =
+  ## Generate binary operation for all possible
+  ## Variant types combinations
   let opStr = $opName
   result = quote do:
     func `opName`*(a, b: Variant): Variant =
-      a.multiRoute(x):
-        b.multiRoute(y):
-          when typeof(x) is typeof(y):
-            tryOp(`opName`(x, y))
-          elif typeof(x) is string:
-            tryOp(`opName`(x, $y))
-          else:
-            tryOp(`opName`(x, typeof(x)(y)))
+      
+      a.everyKind(x):
+        b.everyKind(y):
+          when typeof(x) is typeof(y): tryReturn(`opName`(x,           y))
+          elif typeof(x) is string:    tryReturn(`opName`(x,          $y))
+          else:                        tryReturn(`opName`(x, typeof(x)(y)))
+      # if none of the above yielded results raise
       raise OreError.newException:
         (
           "Unsupported operation between " &
@@ -1005,21 +966,23 @@ macro genBinOp(opName: untyped) =
           $b & " (" & $b.kind & ") - '" & $`opStr` & "'"
         )
 
-
 macro genUnOp(opName: untyped) =
+  ## Generate unary operation for every possible Variant type
   let opStr = $opName
   quote do: 
     func `opName`*(a: Variant): Variant =
       template oreError() =
         raise OreError.newException:
           "Unsupported operation for " & $a & "(" & $a.kind & " - '" & $`opStr` & "'"
-      a.multiRoute(x):
-        tryOp(`opName`(x))
+      a.everyKind(x):
+        tryReturn(`opName`(x))
       oreError()
 
 macro batchGenOps() =
+  ## Generate all the possible operations for Variant types
   template callGenFunc(name, target): untyped =
     newCall(ident(name), newTree(kind=nnkAccQuoted, target))
+
   result = newStmtList()
   for i in opPlus..OperatorKind.high:
     if i in {opEq}: continue
@@ -1048,23 +1011,63 @@ func isTruthy*(n: Variant): bool =
       return not v.isEmptyOrWhitespace()
     else:
       {.error: "Unsupported type".}
-  n.multiRoute(x):
+  n.everyKind(x):
     return checkTrue(x)
 
+type
+  OreContext* = ref object
+    ctx*: OreContext
+    path*: string
+    deps*: seq[string]
+    variables*: Table[string, Variant]
+  
+  OreFileHandler* = object
+    ctx*: OreContext
+
+  OreEngine* = object
+    globalContext*: OreContext
+    files*: Table[string, OreFileHandler]
+
+func initOreContext*(ctx: OreContext = nil, path: string = ""): OreContext =
+  result = OreContext(
+    ctx: ctx,
+    path: path,
+    variables: initTable[string, Variant]()
+  )
+
+func initOreEngine*(): OreEngine =
+  OreEngine(
+    globalContext: initOreContext()
+  )
+
+func initOreFileHandler*(e: var OreEngine, filepath: string): OreFileHandler =
+  result = OreFileHandler(
+    ctx: initOreContext(ctx=e.globalContext, path=filepath)
+  )
+  e.files[filepath] = result
+
+proc setVar*(ctx: var OreContext, name: string, val: Variant) =
+  ## Set variable in ore context
+  doAssert ctx != nil
+  ctx.variables[name] = val
+
+proc getVar*(ctx: OreContext, name: string): Variant =
+  ## Get variable in ore context, if doesn't exist
+  ## returns Variant.null
+  if ctx == nil: return Variant.null
+  if name in ctx.variables:
+    ctx.variables[name]
+  else:
+    ctx.ctx.getVar(name)
 
 func evalExpression(ctx: OreContext, node: Node): Variant =
 
   macro genBinOperatorsImpl() =
+    ## Generate implementation of every operator for Variant
     result = newStmtList(
       newTree(
         kind=nnkCaseStmt,
-        newDotExpr(
-          newDotExpr(
-            ident("node"),
-            ident("binOp")
-          ),
-          ident("opKind")
-        )
+        newDotExpr(newDotExpr(ident("node"),ident("binOp")),ident("opKind"))
       )
     )
 
@@ -1076,26 +1079,16 @@ func evalExpression(ctx: OreContext, node: Node): Variant =
 
     let caseStmt = result[0]
     for i in opPlus..OperatorKind.high:
-      if i in {opEq}: continue
-      let opIdent = ident(opKindToStr[i])
-      var impl = newStmtList(
-        newAssignment(
-          ident("result"),
-          newTree(
-            kind=nnkInfix,
-            opIdent,
-            getSide("left"),
-            getSide("right")
+      if i in {opEq}: continue  # not applicable, skip
+      let
+        opIdent = ident(opKindToStr[i])
+        impl = newStmtList(
+          newAssignment(
+            ident("result"),
+            newTree(kind=nnkInfix, opIdent, getSide("left"), getSide("right"))
           )
         )
-      )
-      caseStmt.add(
-        newTree(
-          kind=nnkOfBranch,
-          ident($i),
-          impl
-        )
-      )
+      caseStmt.add(newTree(kind=nnkOfBranch,ident($i),impl))
     caseStmt.add(
       newTree(
         kind=nnkElse,
@@ -1103,10 +1096,7 @@ func evalExpression(ctx: OreContext, node: Node): Variant =
           newTree(
             kind=nnkRaiseStmt,
             newCall(
-              newDotExpr(
-                ident("OreError"),
-                ident("newException")
-              ),
+              newDotExpr(ident("OreError"),ident("newException")),
               newStrLitNode("Operation unsupported.")
             )
           )
@@ -1141,7 +1131,6 @@ func evalExpression(ctx: OreContext, node: Node): Variant =
 
   else: node.unreacahble()
 
-
 proc renderNode*(ctx: var OreContext, node: Node): string =
   ## Evaluate given node to string 
   if node == nil: return ""
@@ -1166,12 +1155,19 @@ proc renderNode*(ctx: var OreContext, node: Node): string =
       raise OreError.newException:
         "Internal error"
 
+proc parseString(ctx: var OreContext, input: string): Node =
+  ## Parse given string.
+  ## Saturate context with data nessesary for string construction
+  var p = initParser(input)
+  result = p.parseBlock()
 
 proc renderString*(ctx: var OreContext, input: string): string =
-  var p = initParser(input)
-  var parsed = p.parseBlock()
+  var parsed = ctx.parseString(input)
   result = ctx.renderNode(parsed)
-
 
 proc renderString*(e: var OreEngine, input: string): string =
   result = e.globalContext.renderString(input)
+
+proc renderFile*(e: var OreEngine, filepath: string): string =
+  var fh = e.initOreFileHandler(filepath)
+  result = fh.ctx.renderString(fh.ctx.path.readFile())
