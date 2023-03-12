@@ -61,6 +61,10 @@ suite "Test engine":
     var e = initOreEngine()
     check e.renderFile("tests/templates/extends.ore") == "Hello, world!\n2 + 2 = 4"
 
-  test "Block override":
+  test "Test block override":
     var e = initOreEngine()
     check e.renderFile("tests/templates/blockOverride.ore") == "Hello, Ore!\n"
+
+  test "Test nested extends":
+    var e = initOreEngine()
+    check e.renderFile("tests/templates/nest3.ore") == "Nest 1 : \"3\" Nest 2 : \"\" Nest 3 : \"\""
