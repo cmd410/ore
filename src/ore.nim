@@ -1094,13 +1094,15 @@ macro genBinOp(opName: untyped) =
 
 macro genUnOp(opName: untyped) =
   ## Generate unary operation for every possible Variant type
-  let opStr = $opName
+  let
+    opStr = $opName
+    a = ident("a")
   quote do: 
-    func `opName`*(a: Variant): Variant =
+    func `opName`*(`a`: Variant): Variant =
       template oreError() =
         raise OreError.newException:
-          "Unsupported operation for " & $a & "(" & $a.kind & " - '" & $`opStr` & "'"
-      a.everyKind(x):
+          "Unsupported operation for " & $`a` & "(" & $`a`.kind & " - '" & $`opStr` & "'"
+      `a`.everyKind(x):
         tryReturn(`opName`(x).toVariant())
       oreError()
 
@@ -1117,6 +1119,7 @@ macro batchGenOps() =
   for i in [opPlus, opMinus]:
     let opIdent = ident(opKindToStr[i])
     result.add callGenFunc("genUnOp", opIdent)
+
 
 batchGenOps()
 
