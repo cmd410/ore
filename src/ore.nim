@@ -92,6 +92,9 @@ type
     # =     ==        <        >         <=        >=
     opEq, opCmpEq, opCmpLs, opCmpGt, opCmpEqLs, opCmpEqGt
 
+    # and   or    xor
+    opAnd, opOr, opXor
+
   BracketKind = enum
     brLParen, brRParen,
     brLBrack, brRBrack
@@ -121,8 +124,8 @@ type
 
 # Enum to string conversions
 const brKindToStr: array[BracketKind, string] = ["(", ")", "[", "]"]
-const opKindToStr: array[OperatorKind, string] = [".", "+", "-", "*", "/", "&", "=", "==", "<", ">", "<=", ">="]
-const opToPrecendece: array[OperatorKind, int] = [ 10,  8,   8,   9,   9,   7 ,  1,   5,    5,   5,   5,    5  ]
+const opKindToStr: array[OperatorKind, string] = [".", "+", "-", "*", "/", "&", "=", "==", "<", ">", "<=", ">=", "and", "or", "xor"]
+const opToPrecedence: array[OperatorKind, int] = [ 10,  8,   8,   9,   9,   7 ,  1,   5,    5,   5,   5,    5  ,   4,    3,     3  ]
 
 
 func initToken(pos: CodePos, kind: static[TokenKind]): Token =
@@ -436,11 +439,18 @@ func tokenizeExpr(lex: var Lexer): Token =
       lex.maybeCloseExpr(tkStmtEnd)
     else: discard
 
-    let opIdx = opKindToStr.find($c)
+    let doubleOp = c & lex.peek()
+    var opIdx = opKindToStr.find(doubleOp)
     if opIdx != -1:
+      lex.advance()
       result = pos.initToken(opIdx.OperatorKind)
       return
-      
+    else:
+      opIdx = opKindToStr.find($c)
+      if opIdx != -1:
+        result = pos.initToken(opIdx.OperatorKind)
+        return
+
     let brIdx = brKindToStr.find($c)
     if brIdx != -1:
       result = pos.initToken(brIdx.BracketKind)
@@ -462,6 +472,10 @@ func tokenizeExpr(lex: var Lexer): Token =
       of "false":
         result = pos.initToken(false)
       else:
+        opIdx = opKindToStr.find(ident)
+        if opIdx != -1:
+          result = pos.initToken(opIdx.OperatorKind)
+          return
         result = pos.initToken(ident, false, tkVar)
       return
 
@@ -759,8 +773,8 @@ proc parseExpression(p: var Parser): Node =
             of ndBinOp:
               # Compare operator precednce
               let
-                cPres = opToPrecendece[tok.opKind]
-                pPres = opToPrecendece[result.origin.opKind]
+                cPres = opToPrecedence[tok.opKind]
+                pPres = opToPrecedence[result.origin.opKind]
                 d = cmp(cPres, pPres+result.precedence)
 
               if d <= 0:

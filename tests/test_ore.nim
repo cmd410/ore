@@ -10,6 +10,11 @@ suite "Test Ore Context":
     var e = initOreContext()
     check e.renderString(inputSimple) == "2 + 2 = 4 Did you know?"
   
+  test "Test multi-char operators":
+    var e = initOreContext()
+    check e.renderString("{{ 2 <= 3 }}") == "true"
+    check e.renderString("{{ true and false }}") == "false"
+
   test "Test set variable":
     const input = "{% set a = 10 %}{% set b = 32 %}{{ a + b }}"
     var e = initOreContext()
