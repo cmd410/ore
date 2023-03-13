@@ -1051,26 +1051,30 @@ template tryReturn(op: untyped) =
 macro genBinOp(opName: untyped) =
   ## Generate binary operation for all possible
   ## Variant types combinations
-  let opStr = $opName
+  let
+    opStr = $opName
+    a = ident("a")
+    b = ident("b")
+    op = ident("op")
+
   result = quote do:
-    func `opName`*(a, b: Variant, op: Node = nil): Variant =
-      ## Implementation of operator for Variant type
-      a.everyKind(x):
-        b.everyKind(y):
-          when typeof(x) is typeof(y): tryReturn(`opName`(x,           y ).toVariant(op))
-          elif typeof(x) is string:    tryReturn(`opName`(x,          $y ).toVariant(op))
-          else:                        tryReturn(`opName`(x, typeof(x)(y)).toVariant(op))
+    func `opName`*(`a`, `b`: Variant, `op`: Node = nil): Variant =
+      `a`.everyKind(x):
+        `b`.everyKind(y):
+          when typeof(x) is typeof(y): tryReturn(`opName`(x,           y ).toVariant(`op`))
+          elif typeof(x) is string:    tryReturn(`opName`(x,          $y ).toVariant(`op`))
+          else:                        tryReturn(`opName`(x, typeof(x)(y)).toVariant(`op`))
       # if none of the above yielded results raise
       var lnInfo = 
-        if op != nil:
-          " at " & $op.getNodePos().humanRepr
+        if `op` != nil:
+          " at " & $`op`.getNodePos().humanRepr
         else:
           ""
       raise OreError.newException:
         (
           "Unsupported operation between " &
-          $a & " (" & $a.kind & ") and " &
-          $b & " (" & $b.kind & ") - '" & $`opStr` & "'" &
+          $`a` & " (" & $`a`.kind & ") and " &
+          $`b` & " (" & $`b`.kind & ") - '" & $`opStr` & "'" &
           lnInfo
         )
 
