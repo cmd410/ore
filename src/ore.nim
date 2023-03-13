@@ -1284,7 +1284,6 @@ proc renderNode(ctx: var OreContext, node: Node): string =
       case el.kind
       
       of ndExtends:
-        doAssert el.otherNode.isConst()
         let otherVar = ctx.evalExpression(el.otherNode)
         doAssert otherVar.kind == varStr
         let filepath = ctx.path /../ $otherVar
