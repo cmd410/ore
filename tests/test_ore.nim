@@ -50,3 +50,7 @@ suite "Test Ore Context":
   test "Test nested extends":
     var e = initOreContext()
     check e.renderFile("tests/templates/nest3.ore") == "Nest 1 : \"3\" Nest 2 : \"\" Nest 3 : \"\""
+  
+  test "Test while loop":
+    var e = initOreContext()
+    check e.renderFile("tests/templates/while.ore") == "10 9 8 7 6 5 4 3 2 1 "

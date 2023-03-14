@@ -51,7 +51,7 @@ Example:
 {% for i in iterator %}
 {% endfor %}
 
-# while loop blocks (WIP)
+# while loop blocks
 {% while condition %}
 {% endwhile %}
 

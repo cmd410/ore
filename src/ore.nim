@@ -382,11 +382,9 @@ func tokenizeExpr(lex: var Lexer): Token =
     case c
     of '{':
       result = pos.initToken(tkExprStart)
-      lex.advance()
       return
     of '%':
       result = pos.initToken(tkStmtStart)
-      lex.advance()
       return
     else:
       raise OreError.newException:
@@ -460,7 +458,7 @@ func tokenizeExpr(lex: var Lexer): Token =
       var
         ident = $c
         next = lex.peek()
-        
+
       while next.isAlphaAscii or next in {'_'}:
         c = lex.advance()
         ident &= c
@@ -551,6 +549,7 @@ type
     ndSetVar
     ndIfBlock
     ndExtends
+    ndWhile
 
   Node = ref object
     ## Node is base unit of AST
@@ -568,7 +567,7 @@ type
       right*: Node
     of ndSetVar:
       varValue: Node
-    of ndIfBlock:
+    of ndIfBlock, ndWhile:
       conditionNode*: Node
       truePath*: Node
       falsePath*: Node
@@ -624,6 +623,11 @@ func treeRepr(n: Node, indent: int = 0): string =
     result &= n.conditionNode.treeRepr(indent + deltaIndent)
     result &= n.truePath.treeRepr(indent + deltaIndent)
     result &= n.falsePath.treeRepr(indent + deltaIndent)
+  of ndWhile:
+    result &= "while:\n"
+    result &= n.conditionNode.treeRepr(indent + deltaIndent)
+    result &= n.truePath.treeRepr(indent + deltaIndent)
+    result &= n.falsePath.treeRepr(indent + deltaIndent)
   of ndExtends:
     result &= "Extends:\n" & n.otherNode.treeRepr(indent + deltaIndent)
 
@@ -652,7 +656,7 @@ func isConst(n: Node): bool =
   of ndIfBlock:
     result = n.conditionNode.isConst()
   of ndSetVar: discard
-  of ndExtends:
+  of ndExtends, ndWhile:
     result = false
 
 type
@@ -740,7 +744,7 @@ proc parseExpression(p: var Parser): Node =
         current = current.operand   # descend
       else: break
 
-  while tok.kind notin {tkExprEnd, tkStmtEnd, tkEof}:
+  while true:
     case tok.kind
     of tkStr, tkBool, tkFloat, tkInt, tkVar:
       let node = Node(kind: ndValue, origin: tok)
@@ -819,9 +823,12 @@ proc parseExpression(p: var Parser): Node =
 
       else: unreachable()
     
-    of tkExprEnd, tkEof: break
+    of tkExprEnd, tkEof, tkStmtEnd:
+      doAssert result != nil
+      break
     else: unreachable()
     tok = p.advance()
+
 
 proc parseBlock(p: var Parser, tillStmt: static[string] = ""): Node =
   ## Parse block of code untill `tillStmt` statement is ecnountered,
@@ -834,13 +841,21 @@ proc parseBlock(p: var Parser, tillStmt: static[string] = ""): Node =
     rope: @[]
   )
 
-  when tillStmt == "endif":
-    var ifBlock = Node(kind: ndIfBlock, truePath: result)
+  when tillStmt in ["endif", "endwhile"]:
+    
+    when tillStmt == "endif":
+      const knd = ndIfBlock
+    elif tillStmt == "endwhile":
+      const knd = ndWhile
+    else: error("unreacahble")
+    
+    var ifBlock = Node(kind: knd, truePath: result)
       ## In ifBlock parsing this is the REAL return value.
       ## The `falsePath` might be assigned during parsing
       ## if `{% else %}` or `{% elif ... %}` are encountered.
       ## The `conditionNode` is empty deliberately and has to be set
       ## by outside block.
+
 
   when tillStmt != "":
     var endWordMet = false
@@ -920,11 +935,23 @@ proc parseBlock(p: var Parser, tillStmt: static[string] = ""): Node =
           elifBlock.conditionNode = conditionNode
           endWordMet = true
           ifBlock.falsePath = elifBlock
+      
       of "extends":
         var other = p.parseExpression()
         p.eatToken({tkStmtEnd})
         var node = Node(kind: ndExtends, otherNode: other)
         result.rope.add(node)
+      
+      of "while":
+        var conditionNode = p.parseExpression()
+        p.eatToken({tkStmtEnd})
+        p.state = parseStateText
+        var
+          node = p.parseBlock("endwhile")
+        node.conditionNode = conditionNode
+        node.origin = stmtStart
+        result.rope.add node
+      
       of tillStmt:
         when tillStmt != "":
           endWordMet = true
@@ -947,7 +974,7 @@ proc parseBlock(p: var Parser, tillStmt: static[string] = ""): Node =
     else: discard
   
   when tillStmt == "": discard
-  elif tillStmt == "endif":
+  elif tillStmt in ["endif", "endwhile"]:
     result = ifBlock
   else:
     p.assertRule(
@@ -1119,7 +1146,6 @@ macro batchGenOps() =
   for i in [opPlus, opMinus]:
     let opIdent = ident(opKindToStr[i])
     result.add callGenFunc("genUnOp", opIdent)
-
 
 batchGenOps()
 
@@ -1335,6 +1361,15 @@ proc renderNode(ctx: var OreContext, node: Node): string =
     if condition.isTruthy():
       result &= ctx.renderNode(node.truePath)
     else:
+      result &= ctx.renderNode(node.falsePath)
+  
+  of ndWhile:
+    let condition = node.conditionNode
+    var hasItered = false
+    while ctx.evalExpression(condition).isTruthy():
+      result &= ctx.renderNode(node.truePath)
+      hasItered = true
+    if not hasItered:
       result &= ctx.renderNode(node.falsePath)
   
   # all extends nodes should be eliminated at this point
