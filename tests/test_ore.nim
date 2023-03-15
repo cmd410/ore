@@ -19,9 +19,9 @@ suite "Test Ore Context":
     check e.renderString(input) == "42"
   
   test "Test lists":
-    const input = "{{[1, 2,] & [3, 4]}}"
+    const input = "{{4 in [1, 2,] & [3, 4]}}"
     var e = initOreContext()
-    check e.renderString(input) == "@[1, 2, 3, 4]"
+    check e.renderString(input) == "true"
 
   test "Test blocks":
     const input = "{% block TestBlock %}Test{% endblock %}"

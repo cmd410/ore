@@ -95,7 +95,9 @@ type
     opEq, opCmpEq, opCmpLs, opCmpGt, opCmpEqLs, opCmpEqGt
 
     # and   or    xor
-    opAnd, opOr, opXor
+    opAnd, opOr, opXor,
+    # in   notin
+    opIn, opNotIn
 
   BracketKind = enum
     brLParen, brRParen,
@@ -126,8 +128,8 @@ type
 
 # Enum to string conversions
 const brKindToStr: array[BracketKind, string] = ["(", ")", "[", "]"]
-const opKindToStr: array[OperatorKind, string] = [".", "+", "-", "*", "/", "&", "=", "==", "<", ">", "<=", ">=", "and", "or", "xor"]
-const opToPrecedence: array[OperatorKind, int] = [ 10,  8,   8,   9,   9,   7 ,  1,   5,    5,   5,   5,    5  ,   4,    3,     3  ]
+const opKindToStr: array[OperatorKind, string] = [".", "+", "-", "*", "/", "&", "=", "==", "<", ">", "<=", ">=", "and", "or", "xor", "in", "notin"]
+const opToPrecedence: array[OperatorKind, int] = [ 10,  8,   8,   9,   9,   7 ,  1,   5,    5,   5,   5,    5  ,   4,    3,     3  ,   5,    5    ]
 
 
 func initToken(pos: CodePos, kind: static[TokenKind]): Token =
@@ -1154,6 +1156,34 @@ template tryReturn(op: untyped) =
   ## If the op compiles, return it
   when compiles(op): return op
 
+func isTruthy*(n: Variant): bool =
+  ## Check if variant value is truthy
+  ## 
+  ## - booleans are returned as-is
+  ## - int and float are truthy when not equal to zero
+  ## - string is truthy if it is not empty or whitespace
+  ## - seq is truthy if it's not empty
+  ## - null is never truthy
+  template checkTrue(v): untyped =
+    when v is   bool: v
+    elif v is    int: v != 0
+    elif v is  float: v != 0.0
+    elif v is string: not v.isEmptyOrWhitespace()
+    elif v is    seq: not v.len == 0
+    else: {.error: "Unsupported type".}
+  n.everyKind(x):
+    return checkTrue(x)
+  do: # onNull
+    return false
+
+func contains*[T](a: seq[Variant], b: T): bool =
+  result = false
+  let val = b.toVariant()
+  for i in a:
+    if (i == val).isTruthy():
+      result = true
+      break
+
 macro genBinOp(opName: untyped) =
   ## Generate binary operation for all possible
   ## Variant types combinations
@@ -1165,6 +1195,18 @@ macro genBinOp(opName: untyped) =
 
   result = quote do:
     func `opName`*(`a`, `b`: Variant, `op`: Node = nil): Variant =
+      when `opStr` in ["in", "notin"]:
+        case `b`.kind
+        of varList:
+          case `opStr`
+          of "in":
+            let r = `b`.items.contains(`a`)
+            return r.toVariant(`op`)
+          of "notin":
+            let r = not `b`.items.contains(`a`)
+            return r.toVariant(`op`)
+        else: discard
+      
       `a`.everyKind(x):
         `b`.everyKind(y):
           when typeof(x) is typeof(y):
@@ -1173,6 +1215,7 @@ macro genBinOp(opName: untyped) =
             tryReturn(`opName`(x, $y).toVariant(`op`))
           else:
             tryReturn(`opName`(x, typeof(x)(y)).toVariant(`op`))
+      
       # if none of the above yielded results raise
       let lnInfo = 
         if `op` != nil:
@@ -1221,26 +1264,6 @@ macro batchGenOps() =
     result.add callGenFunc("genUnOp", opIdent)
 
 batchGenOps()
-
-func isTruthy*(n: Variant): bool =
-  ## Check if variant value is truthy
-  ## 
-  ## - booleans are returned as-is
-  ## - int and float are truthy when not equal to zero
-  ## - string is truthy if it is not empty or whitespace
-  ## - seq is truthy if it's not empty
-  ## - null is never truthy
-  template checkTrue(v): untyped =
-    when v is   bool: v
-    elif v is    int: v != 0
-    elif v is  float: v != 0.0
-    elif v is string: not v.isEmptyOrWhitespace()
-    elif v is    seq: not v.len == 0
-    else: {.error: "Unsupported type".}
-  n.everyKind(x):
-    return checkTrue(x)
-  do: # onNull
-    return false
 
 type
   OreContext* = ref object
