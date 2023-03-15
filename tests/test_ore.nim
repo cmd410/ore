@@ -59,3 +59,7 @@ suite "Test Ore Context":
   test "Test while loop":
     var e = initOreContext()
     check e.renderFile("tests/templates/while.ore") == "10 9 8 7 6 5 4 3 2 1 "
+  
+  test "Test for loop":
+    var e = initOreContext()
+    check e.renderString("{% for i in [1,2,3,4] %}{{ i }} {% endfor %}") == "1 2 3 4 "

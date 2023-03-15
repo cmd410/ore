@@ -563,6 +563,7 @@ type
     ndExtends
     ndWhile,
     ndList
+    ndForLoop
 
   Node = ref object
     ## Node is base unit of AST
@@ -589,6 +590,10 @@ type
     of ndList:
       items*: seq[Node]
       finished: bool
+    of ndForLoop:
+      name*: Node
+      iter*: Node
+      body*: Node
 
 func getNodePos(n: Node): CodePos =
   ## Attempt to get position in code given node
@@ -649,6 +654,11 @@ func treeRepr(n: Node, indent: int = 0): string =
     result &= "List:\n"
     for i in n.items:
       result &= i.treeRepr(indent + deltaIndent)
+  of ndForLoop:
+    result &= "For loop:\n"
+    result &= n.name.treeRepr(indent + deltaIndent)
+    result &= n.iter.treeRepr(indent + deltaIndent)
+    result &= n.body.treeRepr(indent + deltaIndent)
 
 func isConst(n: Node): bool =
   ## Check if node can be evaluated
@@ -682,6 +692,8 @@ func isConst(n: Node): bool =
     for i in n.items:
       result = result and i.isConst()
       if not result: return
+  of ndForLoop:
+    result = n.iter.isConst()
 
 type
   ParseState = enum
@@ -871,6 +883,7 @@ proc parseExpression(p: var Parser): Node =
         else:
           result = listNode
         tok = p.cTok
+
         continue
       of brRBrack:
         break
@@ -916,16 +929,15 @@ proc parseBlock(p: var Parser, tillStmt: static[string] = ""): Node =
     p.advance()  # ew
 
   while true:
-
     case p.state:
     of parseStateQuit: break
     of parseStateText:
       let tok = p.eatToken({tkStr})
-      result.rope.add Node(
+      let valueNode = Node(
         kind: ndValue,
         origin: tok
       )
-
+      result.rope.add valueNode
     of parseStateExpr:
       p.eatToken({tkExprStart})
       result.rope.add p.parseExpression()
@@ -1005,6 +1017,17 @@ proc parseBlock(p: var Parser, tillStmt: static[string] = ""): Node =
         node.origin = stmtStart
         result.rope.add node
       
+      of "for":
+        let idNode = Node(kind: ndValue, origin: p.eatToken({tkVar}))
+        p.eatOperator({opIn})
+        let iterNode = p.parseExpression()
+        p.eatToken({tkStmtEnd})
+        p.state = parseStateText
+        let bodyNode = p.parseBlock("endfor")
+        let forNode = Node(kind: ndForLoop, name: idNode, iter: iterNode, body: bodyNode)
+        forNode.origin = stmtStart
+        result.rope.add forNode
+
       of tillStmt:
         when tillStmt != "":
           endWordMet = true
@@ -1475,7 +1498,19 @@ proc renderNode(ctx: var OreContext, node: Node): string =
       hasItered = true
     if not hasItered:
       result &= ctx.renderNode(node.falsePath)
-  
+  of ndForLoop:
+    let name = $node.name.origin
+    let iter = ctx.evalExpression(node.iter)
+    case iter.kind
+    of varList:
+      var i = iter.items.low
+      while i <= iter.items.high:
+        ctx.setVar(name, iter.items[i])
+        result &= ctx.renderNode(node.body)
+        i += 1
+    else:
+      raise OreError.newException:
+        "Unsupported iteration over " & $iter.kind
   # all extends nodes should be eliminated at this point in rope branch
   of ndExtends: unreachable()
 
