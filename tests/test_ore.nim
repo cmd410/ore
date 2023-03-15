@@ -2,14 +2,12 @@ import unittest
 
 import ore
 
-const inputSimple = "{% set a = 2 %}2 + 2 = {{ 2 + a }} Did you know?"
-
 
 suite "Test Ore Context":
   test "Test simple":
     var e = initOreContext()
-    check e.renderString(inputSimple) == "2 + 2 = 4 Did you know?"
-  
+    check e.renderString("2 + 2 = {{ 2 + 2 }} Did you know?") == "2 + 2 = 4 Did you know?"
+
   test "Test multi-char operators":
     var e = initOreContext()
     check e.renderString("{{ 2 <= 3 }}") == "true"

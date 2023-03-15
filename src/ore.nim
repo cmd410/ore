@@ -1106,7 +1106,7 @@ macro genBinOp(opName: untyped) =
           elif typeof(x) is string:    tryReturn(`opName`(x,          $y ).toVariant(`op`))
           else:                        tryReturn(`opName`(x, typeof(x)(y)).toVariant(`op`))
       # if none of the above yielded results raise
-      var lnInfo = 
+      let lnInfo = 
         if `op` != nil:
           " at " & $`op`.getNodePos().humanRepr
         else:
@@ -1124,14 +1124,19 @@ macro genUnOp(opName: untyped) =
   let
     opStr = $opName
     a = ident("a")
+    op = ident("op")
   quote do: 
-    func `opName`*(`a`: Variant): Variant =
-      template oreError() =
-        raise OreError.newException:
-          "Unsupported operation for " & $`a` & "(" & $`a`.kind & " - '" & $`opStr` & "'"
+    func `opName`*(`a`: Variant, `op`: Node = nil): Variant =
       `a`.everyKind(x):
         tryReturn(`opName`(x).toVariant())
-      oreError()
+      # if none of the above yielded results raise
+      let lnInfo = 
+        if `op` != nil:
+          " at " & $`op`.getNodePos().humanRepr
+        else:
+          ""
+      raise OreError.newException:
+        "Unsupported operation for " & $`a` & "(" & $`a`.kind & " - '" & $`opStr` & "'" & lnInfo 
 
 macro batchGenOps() =
   ## Generate all the possible operations for Variant types
@@ -1289,11 +1294,9 @@ func evalExpression(ctx: OreContext, node: Node): Variant =
   of ndUnOp:
     case node.origin.opKind
     of opMinus:
-      result = -ctx.evalExpression(node.operand)
-      result.origin = node
+      result = `-`(ctx.evalExpression(node.operand), node)
     of opPlus:
-      result = +ctx.evalExpression(node.operand)
-      result.origin = node
+      result = `+`(ctx.evalExpression(node.operand), node)
     else:
       raise OreError.newException:
         fmt"Unsupported unary operator - {node.origin.opKind}"
@@ -1372,7 +1375,7 @@ proc renderNode(ctx: var OreContext, node: Node): string =
     if not hasItered:
       result &= ctx.renderNode(node.falsePath)
   
-  # all extends nodes should be eliminated at this point
+  # all extends nodes should be eliminated at this point in rope branch
   of ndExtends: unreachable()
 
 proc renderString*(ctx: var OreContext, input: string): string =
