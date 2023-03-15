@@ -70,6 +70,7 @@ import options
 import os
 import sugar
 
+
 type
   CodePos = tuple[offset, line, col: int]
 
@@ -732,7 +733,7 @@ proc eatBracket(p: var Parser, brKinds: set[BracketKind]): Token {.discardable.}
   p.assertRule(result.brKind in brKinds, result.pos):
     "Unexpected operator '" & $result.brKind & "'. Expected " & $brKinds & "."
 
-proc unreachable() =
+proc unreachable() {.noreturn.} =
   ## Call on unreacahble? branches and other
   ## impossible? condition to catch bugs in parser 
   raise OreError.newException:
@@ -743,7 +744,7 @@ proc unreachable() =
     )
 
 proc parseExpression(p: var Parser): Node =
-  # BEHOLD, recursiveless recursive descent expression parsing
+  # BEHOLD, *mostly* recursionless recursive descent expression parsing
   var tok = p.cTok
   var subExprStack: seq[Node]
     ## This variable contains a stack
@@ -768,15 +769,6 @@ proc parseExpression(p: var Parser): Node =
           current.operand = b     # Fill and leave
           return true
         current = current.operand   # descend
-      of ndList:
-        echo "HUH??"
-        if a.items.len > 0:
-          echo "HUH???"
-          if a.items[a.items.high] == nil:
-            echo "HUH????"
-            a.items[a.items.high] = b
-            result = true
-          break
       else: break
 
   while true:
@@ -790,13 +782,9 @@ proc parseExpression(p: var Parser): Node =
         # if something was parsed before we do...
         case result.kind
         of ndUnOp, ndBinOp, ndList:
-          echo result.treeRepr
-          echo "HUH?"
           p.assertRule(result.setRightmostNil(node), tok.pos):
             "Invalid syntax"
         else: 
-          echo result.treeRepr
-          echo tok.humanRepr
           unreachable()
 
     of tkOperator:
@@ -807,7 +795,7 @@ proc parseExpression(p: var Parser): Node =
       else:
         # Check previous operation
         case result.kind
-        of ndValue:
+        of ndValue, ndList:
           # value before operator creates binary operator
           result = Node(kind: ndBinOp, origin: tok, left: result)
         of ndUnOp, ndBinOp:
@@ -863,30 +851,27 @@ proc parseExpression(p: var Parser): Node =
           result = prev
       of brLBrack:
         # Parsing [...] started
-
-        subExprStack.add result
-        result = Node(kind: ndList)
-        result.items.add nil
         p.eatBracket({brLBrack})
-        continue
 
-      of brRBrack:
-        p.assertRule(subExprStack.len != 0, tok.pos, "']' doesn't match any '['")
-        p.assertRule(result != nil, tok.pos, "Invalid syntax")
-        p.assertRule(result.kind == ndList, tok.pos, "']' doesn't match any '['")
-        if result.items.len > 0:
-          if result.items[result.items.high] == nil:
-            discard result.items.pop()
-        var prev = subExprStack.pop()
-        if prev != nil:
-          prev.setRightmostNil(result)
-          result = prev
+        var listNode = Node(kind: ndList, items: @[p.parseExpression()])
+        while p.cTok.kind == tkComma:
+          p.eatToken({tkComma})
+          let exp = p.parseExpression()
+          if exp == nil: break
+          listNode.items.add exp
+        
         p.eatBracket({brRBrack})
+        
+        if result != nil:
+          result.setRightmostNil(listNode)
+        else:
+          result = listNode
+        tok = p.cTok
         continue
-    of tkComma:
-      p.assertRule(result.kind == ndList, tok.pos, "Unexpected comma")
-      result.items.add nil
-    of tkExprEnd, tkEof, tkStmtEnd:
+      of brRBrack:
+        break
+        
+    of tkExprEnd, tkEof, tkStmtEnd, tkComma:
       doAssert result != nil
       break
     else:
