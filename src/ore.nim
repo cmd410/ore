@@ -83,7 +83,7 @@ type
 
     tkExprStart, tkExprEnd  ## {{ and }}
     tkStmtStart, tkStmtEnd  ## {% and %}
-    tkBracket
+    tkBracket, tkComma
   
   OperatorKind = enum
     opDot,
@@ -131,7 +131,7 @@ const opToPrecedence: array[OperatorKind, int] = [ 10,  8,   8,   9,   9,   7 , 
 
 func initToken(pos: CodePos, kind: static[TokenKind]): Token =
   ## Create valueless token, only accepts valueless token kinds
-  when kind notin {tkEof, tkExprStart, tkExprEnd, tkStmtStart, tkStmtEnd}:
+  when kind notin {tkEof, tkExprStart, tkExprEnd, tkStmtStart, tkStmtEnd, tkComma}:
     {.error: "Only valueless token kinds are acceptable in this constructor".}
   Token(
     pos: pos,
@@ -219,6 +219,8 @@ func `$`*(tk: Token): string =
     result = "{%"
   of tkStmtEnd:
     result = "%}"
+  of tkComma:
+    result = ","
 
 func humanRepr(pos: CodePos): string =
   if pos.offset < 0:
@@ -255,6 +257,8 @@ func humanRepr(tk: Token): string =
     result &= "stmt end \"%}\" "
   of tkBracket:
     result &= fmt"""bracket "{brKindToStr[tk.brKind]}" """
+  of tkComma:
+    result = "comma \",\""
   
   result &= fmt"at {tk.pos.humanRepr}"
 
@@ -421,6 +425,8 @@ func tokenizeExpr(lex: var Lexer): Token =
 
     result = pos.initToken(text, true)
 
+  of ',':
+    result = pos.initToken(tkComma)
   else:
 
     template maybeCloseExpr(lex: var Lexer, t: static[TokenKind]): untyped =
@@ -550,7 +556,8 @@ type
     ndSetVar
     ndIfBlock
     ndExtends
-    ndWhile
+    ndWhile,
+    ndList
 
   Node = ref object
     ## Node is base unit of AST
@@ -574,6 +581,9 @@ type
       falsePath*: Node
     of ndExtends:
       otherNode*: Node
+    of ndList:
+      items*: seq[Node]
+      finished: bool
 
 func getNodePos(n: Node): CodePos =
   ## Attempt to get position in code given node
@@ -630,6 +640,10 @@ func treeRepr(n: Node, indent: int = 0): string =
     result &= n.falsePath.treeRepr(indent + deltaIndent)
   of ndExtends:
     result &= "Extends:\n" & n.otherNode.treeRepr(indent + deltaIndent)
+  of ndList:
+    result &= "List:\n"
+    for i in n.items:
+      result &= i.treeRepr(indent + deltaIndent)
 
 func isConst(n: Node): bool =
   ## Check if node can be evaluated
@@ -658,6 +672,11 @@ func isConst(n: Node): bool =
   of ndSetVar: discard
   of ndExtends, ndWhile:
     result = false
+  of ndList:
+    result = true
+    for i in n.items:
+      result = result and i.isConst()
+      if not result: return
 
 type
   ParseState = enum
@@ -696,7 +715,7 @@ proc eatToken(p: var Parser, kinds: set[TokenKind]): Token {.discardable.} =
   ## Returns the token in question.
   result = p.cTok
   p.assertRule(p.cTok.kind in kinds, result.pos):
-    "Unexpected token at " & result.pos.humanRepr & ". Expected " & $kinds & ", got " & $result.kind & " instead"
+    "Unexpected token." & " Expected " & $kinds & ", got " & $result.kind & " instead"
   discard p.advance()
 
 proc eatOperator(p: var Parser, opKinds: set[OperatorKind]): Token {.discardable.} =
@@ -705,6 +724,13 @@ proc eatOperator(p: var Parser, opKinds: set[OperatorKind]): Token {.discardable
   result = p.eatToken({tkOperator})
   p.assertRule(result.opKind in opKinds, result.pos):
     "Unexpected operator '" & $result.opKind & "'. Expected " & $opKinds & "."
+
+proc eatBracket(p: var Parser, brKinds: set[BracketKind]): Token {.discardable.} =
+  ## Confirm that current token is a bracket and one of specific kinds of brackets
+  ## if not raise OreError.
+  result = p.eatToken({tkBracket})
+  p.assertRule(result.brKind in brKinds, result.pos):
+    "Unexpected operator '" & $result.brKind & "'. Expected " & $brKinds & "."
 
 proc unreachable() =
   ## Call on unreacahble? branches and other
@@ -742,6 +768,15 @@ proc parseExpression(p: var Parser): Node =
           current.operand = b     # Fill and leave
           return true
         current = current.operand   # descend
+      of ndList:
+        echo "HUH??"
+        if a.items.len > 0:
+          echo "HUH???"
+          if a.items[a.items.high] == nil:
+            echo "HUH????"
+            a.items[a.items.high] = b
+            result = true
+          break
       else: break
 
   while true:
@@ -754,9 +789,15 @@ proc parseExpression(p: var Parser): Node =
       else:
         # if something was parsed before we do...
         case result.kind
-        of ndUnOp, ndBinOp:
-          result.setRightmostNil(node)
-        else: unreachable()
+        of ndUnOp, ndBinOp, ndList:
+          echo result.treeRepr
+          echo "HUH?"
+          p.assertRule(result.setRightmostNil(node), tok.pos):
+            "Invalid syntax"
+        else: 
+          echo result.treeRepr
+          echo tok.humanRepr
+          unreachable()
 
     of tkOperator:
       if result == nil:
@@ -820,13 +861,36 @@ proc parseExpression(p: var Parser): Node =
         if prev != nil:
           prev.setRightmostNil(result)
           result = prev
+      of brLBrack:
+        # Parsing [...] started
 
-      else: unreachable()
-    
+        subExprStack.add result
+        result = Node(kind: ndList)
+        result.items.add nil
+        p.eatBracket({brLBrack})
+        continue
+
+      of brRBrack:
+        p.assertRule(subExprStack.len != 0, tok.pos, "']' doesn't match any '['")
+        p.assertRule(result != nil, tok.pos, "Invalid syntax")
+        p.assertRule(result.kind == ndList, tok.pos, "']' doesn't match any '['")
+        if result.items.len > 0:
+          if result.items[result.items.high] == nil:
+            discard result.items.pop()
+        var prev = subExprStack.pop()
+        if prev != nil:
+          prev.setRightmostNil(result)
+          result = prev
+        p.eatBracket({brRBrack})
+        continue
+    of tkComma:
+      p.assertRule(result.kind == ndList, tok.pos, "Unexpected comma")
+      result.items.add nil
     of tkExprEnd, tkEof, tkStmtEnd:
       doAssert result != nil
       break
-    else: unreachable()
+    else:
+      unreachable()
     tok = p.advance()
 
 
@@ -1325,6 +1389,10 @@ func evalExpression(ctx: OreContext, node: Node): Variant =
   of ndBinOp:
     genBinOperatorsImpl()
 
+  of ndList:
+    result = Variant(origin: node, kind: varList, items: @[])
+    for i in node.items:
+      result.items.add ctx.evalExpression(i)
   else: unreachable()
 
 proc parseString(ctx: var OreContext, input: string): Node =
@@ -1370,7 +1438,7 @@ proc renderNode(ctx: var OreContext, node: Node): string =
       else: discard
       result &= ctx.renderNode(node.rope[i])
 
-  of ndValue, ndUnOp, ndBinOp:
+  of ndValue, ndUnOp, ndBinOp, ndList:
     result &= $ctx.evalExpression(node)
 
   of ndSetVar:

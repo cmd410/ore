@@ -17,6 +17,11 @@ suite "Test Ore Context":
     const input = "{% set a = 10 %}{% set b = 32 %}{{ a + b }}"
     var e = initOreContext()
     check e.renderString(input) == "42"
+  
+  test "Test lists":
+    const input = "{{[1, 2,] & [3, 4]}}"
+    var e = initOreContext()
+    check e.renderString(input) == "@[1, 2, 3, 4]"
 
   test "Test blocks":
     const input = "{% block TestBlock %}Test{% endblock %}"
