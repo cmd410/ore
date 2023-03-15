@@ -68,6 +68,7 @@ import tables
 import macros
 import options
 import os
+import sugar
 
 type
   CodePos = tuple[offset, line, col: int]
@@ -574,7 +575,6 @@ type
     of ndExtends:
       otherNode*: Node
 
-
 func getNodePos(n: Node): CodePos =
   ## Attempt to get position in code given node
   ## originates from
@@ -985,8 +985,12 @@ proc parseBlock(p: var Parser, tillStmt: static[string] = ""): Node =
 
 type
   VariantKind* = enum
-    varNull
-    varInt, varFloat, varStr, varBool
+    varNull = "Null"
+    varInt = "Int"
+    varFloat = "Float"
+    varStr = "Str"
+    varBool = "Bool"
+    varList = "List"
 
   Variant* = object
     ## This object represents a variable inside OreEngine
@@ -1003,6 +1007,8 @@ type
       strValue*: string
     of varBool:
       boolValue*: bool
+    of varList:
+      items*: seq[Variant]
 
 
 func null*(s:typedesc[Variant], origin: Node = nil): Variant =
@@ -1032,6 +1038,11 @@ func toVariant*[T](v: T, origin: Node = nil): Variant =
   elif T is  string: result = Variant(kind: varStr,   strValue:   v, origin: origin)
   elif T is    bool: result = Variant(kind: varBool,  boolValue:  v, origin: origin)
   elif T is Variant: result = v
+  elif T is seq:
+    let items = collect:
+      for i in v:
+        i.toVariant()
+    result = Variant(kind: varList, items: items)
   else: {.error: "Unsupported type for conversion to Variant: " & $T.}
 
 template everyKind*(val: Variant, name, body, onNull: untyped): untyped =
@@ -1052,22 +1063,11 @@ template everyKind*(val: Variant, name, body, onNull: untyped): untyped =
   of varStr:
     let name = val.strValue
     body
+  of varList:
+    let name = val.items
+    body
   of varNull:
     onNull
-
-func humanRepr*(v: Variant): string =
-  result = "Variant"
-  case v.kind
-  of varNull:
-    result &= "(null)"
-  of varInt:
-    result &= fmt"(int {v.intValue})"
-  of varFloat:
-    result &= fmt"(float {v.floatValue})"
-  of varStr:
-    result &= fmt"(string {v.strValue.escape})"
-  of varBool:
-    result &= fmt"(bool {v.boolValue})"
 
 template everyKind*(val: Variant, name, body: untyped): untyped =
   ## Utility template.
@@ -1077,6 +1077,22 @@ template everyKind*(val: Variant, name, body: untyped): untyped =
   val.everyKind(name):
     body
   do: discard
+
+func humanRepr*(v: Variant): string =
+  result = "Variant"
+  v.everyKind(x):
+    result &= "[" & $v.kind & "]"
+    when typeof(x) is seq[Variant]:
+      result &= "(@["
+      var idx = 0
+      for i in x:
+        result &= i.humanRepr()
+        if idx != x.high:
+          result &= ", "
+        idx += 1
+      result &= "])"
+    else:
+      result &= "(" & $x & ")"
 
 func `$`*(v: Variant): string =
   v.everyKind(x):
@@ -1102,9 +1118,12 @@ macro genBinOp(opName: untyped) =
     func `opName`*(`a`, `b`: Variant, `op`: Node = nil): Variant =
       `a`.everyKind(x):
         `b`.everyKind(y):
-          when typeof(x) is typeof(y): tryReturn(`opName`(x,           y ).toVariant(`op`))
-          elif typeof(x) is string:    tryReturn(`opName`(x,          $y ).toVariant(`op`))
-          else:                        tryReturn(`opName`(x, typeof(x)(y)).toVariant(`op`))
+          when typeof(x) is typeof(y):
+            tryReturn(`opName`(x,  y).toVariant(`op`))
+          elif typeof(x) is string:
+            tryReturn(`opName`(x, $y).toVariant(`op`))
+          else:
+            tryReturn(`opName`(x, typeof(x)(y)).toVariant(`op`))
       # if none of the above yielded results raise
       let lnInfo = 
         if `op` != nil:
@@ -1128,7 +1147,7 @@ macro genUnOp(opName: untyped) =
   quote do: 
     func `opName`*(`a`: Variant, `op`: Node = nil): Variant =
       `a`.everyKind(x):
-        tryReturn(`opName`(x).toVariant())
+        tryReturn(`opName`(x).toVariant(`op`))
       # if none of the above yielded results raise
       let lnInfo = 
         if `op` != nil:
@@ -1160,12 +1179,14 @@ func isTruthy*(n: Variant): bool =
   ## - booleans are returned as-is
   ## - int and float are truthy when not equal to zero
   ## - string is truthy if it is not empty or whitespace
+  ## - seq is truthy if it's not empty
   ## - null is never truthy
   template checkTrue(v): untyped =
     when v is   bool: v
     elif v is    int: v != 0
     elif v is  float: v != 0.0
     elif v is string: not v.isEmptyOrWhitespace()
+    elif v is    seq: not v.len == 0
     else: {.error: "Unsupported type".}
   n.everyKind(x):
     return checkTrue(x)
