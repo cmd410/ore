@@ -14,14 +14,16 @@ suite "Test Ore Context":
     check e.renderString("{{ true and false }}") == "false"
 
   test "Test set variable":
-    const input = "{% set a = 10 %}{% set b = 32 %}{{ a + b }}"
     var e = initOreContext()
-    check e.renderString(input) == "42"
+    check e.renderString("{% set a = 10 %}{% set b = 32 %}{{ a + b }}") == "42"
   
-  test "Test lists":
-    const input = "{{4 in [1, 2,] & [3, 4]}}"
+  test "Test not operator":
     var e = initOreContext()
-    check e.renderString(input) == "true"
+    check e.renderString("{{ not true }}") == "false"
+
+  test "Test lists":
+    var e = initOreContext()
+    check e.renderString("{{4 in [1, 2,] & [3, 4]}}") == "true"
 
   test "Test blocks":
     const input = "{% block TestBlock %}Test{% endblock %}"

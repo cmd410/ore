@@ -97,7 +97,9 @@ type
     # and   or    xor
     opAnd, opOr, opXor,
     # in   notin
-    opIn, opNotIn
+    opIn, opNotIn,
+    # not
+    opNot
 
   BracketKind = enum
     brLParen, brRParen,
@@ -128,8 +130,8 @@ type
 
 # Enum to string conversions
 const brKindToStr: array[BracketKind, string] = ["(", ")", "[", "]"]
-const opKindToStr: array[OperatorKind, string] = [".", "+", "-", "*", "/", "&", "=", "==", "<", ">", "<=", ">=", "and", "or", "xor", "in", "notin"]
-const opToPrecedence: array[OperatorKind, int] = [ 10,  8,   8,   9,   9,   7 ,  1,   5,    5,   5,   5,    5  ,   4,    3,     3  ,   5,    5    ]
+const opKindToStr: array[OperatorKind, string] = [".", "+", "-", "*", "/", "&", "=", "==", "<", ">", "<=", ">=", "and", "or", "xor", "in", "notin", "not"]
+const opToPrecedence: array[OperatorKind, int] = [ 10,  8,   8,   9,   9,   7 ,  1,   5,    5,   5,   5,    5  ,   4,    3,     3  ,   5,    5    ,   0  ]
 
 
 func initToken(pos: CodePos, kind: static[TokenKind]): Token =
@@ -1256,10 +1258,10 @@ macro batchGenOps() =
 
   result = newStmtList()
   for i in opPlus..OperatorKind.high:
-    if i in {opEq}: continue
+    if i in {opEq, opNot}: continue
     let opIdent = ident(opKindToStr[i])
     result.add callGenFunc("genBinOp", opIdent)
-  for i in [opPlus, opMinus]:
+  for i in [opPlus, opMinus, opNot]:
     let opIdent = ident(opKindToStr[i])
     result.add callGenFunc("genUnOp", opIdent)
 
@@ -1347,7 +1349,7 @@ func evalExpression(ctx: OreContext, node: Node): Variant =
 
     let caseStmt = result[0]
     for i in opPlus..OperatorKind.high:
-      if i in {opEq}: continue  # not applicable, skip
+      if i in {opEq, opNot}: continue  # not applicable, skip
       let
         opIdent = ident(opKindToStr[i])
         impl = newStmtList(
@@ -1390,6 +1392,8 @@ func evalExpression(ctx: OreContext, node: Node): Variant =
       result = `-`(ctx.evalExpression(node.operand), node)
     of opPlus:
       result = `+`(ctx.evalExpression(node.operand), node)
+    of opNot:
+      result = `not`(ctx.evalExpression(node.operand), node)
     else:
       raise OreError.newException:
         fmt"Unsupported unary operator - {node.origin.opKind}"
