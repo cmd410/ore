@@ -10,6 +10,7 @@ srcDir        = "src"
 # Dependencies
 
 requires "nim >= 1.6.8"
+requires "https://github.com/cmd410/dynamo#head"
 
 
 task docs, "Generate documentation":

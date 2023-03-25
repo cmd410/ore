@@ -61,14 +61,10 @@ runnableExamples:
   echo ctx.renderFile("tests/templates/simple.ore")
 
 
-import strformat
-import strutils
-import math
-import tables
-import macros
-import options
-import os
-import sugar
+import
+  std / [macros, math, options, os, strformat, strutils, tables]
+
+import dynamo
 
 
 type
@@ -1060,237 +1056,6 @@ proc parseBlock(p: var Parser, tillStmt: static[string] = ""): Node =
 
 
 type
-  VariantKind* = enum
-    varNull = "Null"
-    varInt = "Int"
-    varFloat = "Float"
-    varStr = "Str"
-    varBool = "Bool"
-    varList = "List"
-
-  Variant* = object
-    ## This object represents a variable inside OreEngine
-    origin*: Node 
-      ## AST node that produced this value
-      ## either value or expression 
-    case kind*: VariantKind
-    of varNull: discard
-    of varInt:
-      intValue*: int
-    of varFloat:
-      floatValue*: float
-    of varStr:
-      strValue*: string
-    of varBool:
-      boolValue*: bool
-    of varList:
-      items*: seq[Variant]
-
-
-func null*(s:typedesc[Variant], origin: Node = nil): Variant =
-  ## Return Null variant value
-  ## 
-  ## Origin is an AST Node that produced this value
-  Variant(kind: varNull, origin: origin)
-func toVariant*[T](v: T, origin: Node = nil): Variant =
-  ## Convert given value to variant
-  ## 
-  ## Origin is an AST Node that produced this value
-  when T is Token:
-    case v.kind
-    of tkStr:
-      result = v.strValue.toVariant(origin)
-    of tkInt:
-      result = v.intValue.toVariant(origin)
-    of tkFloat:
-      result = v.floatValue.toVariant(origin)
-    of tkBool:
-      result = v.boolValue.toVariant(origin)
-    else:
-      raise OreError.newException:
-        fmt"Can't convert token {v.kind} to variant at {v.pos.humanRepr}"
-  elif T is     int: result = Variant(kind: varInt,   intValue:   v, origin: origin)
-  elif T is   float: result = Variant(kind: varFloat, floatValue: v, origin: origin)
-  elif T is  string: result = Variant(kind: varStr,   strValue:   v, origin: origin)
-  elif T is    bool: result = Variant(kind: varBool,  boolValue:  v, origin: origin)
-  elif T is Variant: result = v
-  elif T is seq:
-    let items = collect:
-      for i in v:
-        i.toVariant()
-    result = Variant(kind: varList, items: items)
-  else: {.error: "Unsupported type for conversion to Variant: " & $T.}
-
-template everyKind*(val: Variant, name, body, onNull: untyped): untyped =
-  ## Utility template.
-  ## Assigns variant value to `name`
-  ## and does `body` for each branch.
-  ## Except `varNull`, `varNull` does `onNull` branch
-  case val.kind
-  of varInt:
-    let name = val.intValue
-    body
-  of varFloat:
-    let name = val.floatValue
-    body
-  of varBool:
-    let name = val.boolValue
-    body
-  of varStr:
-    let name = val.strValue
-    body
-  of varList:
-    let name = val.items
-    body
-  of varNull:
-    onNull
-
-template everyKind*(val: Variant, name, body: untyped): untyped =
-  ## Utility template.
-  ## Assigns variant value to `name`
-  ## and does `body` for each branch.
-  ## Except `varNull`, `varNull` is discarded
-  val.everyKind(name):
-    body
-  do: discard
-
-func humanRepr*(v: Variant): string =
-  result = "Variant"
-  v.everyKind(x):
-    result &= "[" & $v.kind & "]"
-    when typeof(x) is seq[Variant]:
-      result &= "(@["
-      var idx = 0
-      for i in x:
-        result &= i.humanRepr()
-        if idx != x.high:
-          result &= ", "
-        idx += 1
-      result &= "])"
-    else:
-      result &= "(" & $x & ")"
-
-func `$`*(v: Variant): string =
-  v.everyKind(x):
-    when x is string: result =  x
-    else:             result = $x
-  do: # onNull
-    result = "null"
-
-template tryReturn(op: untyped) =
-  ## If the op compiles, return it
-  when compiles(op): return op
-
-func isTruthy*(n: Variant): bool =
-  ## Check if variant value is truthy
-  ## 
-  ## - booleans are returned as-is
-  ## - int and float are truthy when not equal to zero
-  ## - string is truthy if it is not empty or whitespace
-  ## - seq is truthy if it's not empty
-  ## - null is never truthy
-  template checkTrue(v): untyped =
-    when v is   bool: v
-    elif v is    int: v != 0
-    elif v is  float: v != 0.0
-    elif v is string: not v.isEmptyOrWhitespace()
-    elif v is    seq: not v.len == 0
-    else: {.error: "Unsupported type".}
-  n.everyKind(x):
-    return checkTrue(x)
-  do: # onNull
-    return false
-
-func contains*[T](a: seq[Variant], b: T): bool =
-  result = false
-  let val = b.toVariant()
-  for i in a:
-    if (i == val).isTruthy():
-      result = true
-      break
-
-macro genBinOp(opName: untyped) =
-  ## Generate binary operation for all possible
-  ## Variant types combinations
-  let
-    opStr = $opName
-    a = ident("a")
-    b = ident("b")
-    op = ident("op")
-
-  result = quote do:
-    func `opName`*(`a`, `b`: Variant, `op`: Node = nil): Variant =
-      when `opStr` in ["in", "notin"]:
-        case `b`.kind
-        of varList:
-          case `opStr`
-          of "in":
-            let r = `b`.items.contains(`a`)
-            return r.toVariant(`op`)
-          of "notin":
-            let r = not `b`.items.contains(`a`)
-            return r.toVariant(`op`)
-        else: discard
-      
-      `a`.everyKind(x):
-        `b`.everyKind(y):
-          when typeof(x) is typeof(y):
-            tryReturn(`opName`(x,  y).toVariant(`op`))
-          elif typeof(x) is string:
-            tryReturn(`opName`(x, $y).toVariant(`op`))
-          else:
-            tryReturn(`opName`(x, typeof(x)(y)).toVariant(`op`))
-      
-      # if none of the above yielded results raise
-      let lnInfo = 
-        if `op` != nil:
-          " at " & $`op`.getNodePos().humanRepr
-        else:
-          ""
-      raise OreError.newException:
-        (
-          "Unsupported operation between " &
-          $`a` & " (" & $`a`.kind & ") and " &
-          $`b` & " (" & $`b`.kind & ") - '" & $`opStr` & "'" &
-          lnInfo
-        )
-
-macro genUnOp(opName: untyped) =
-  ## Generate unary operation for every possible Variant type
-  let
-    opStr = $opName
-    a = ident("a")
-    op = ident("op")
-  quote do: 
-    func `opName`*(`a`: Variant, `op`: Node = nil): Variant =
-      `a`.everyKind(x):
-        tryReturn(`opName`(x).toVariant(`op`))
-      # if none of the above yielded results raise
-      let lnInfo = 
-        if `op` != nil:
-          " at " & $`op`.getNodePos().humanRepr
-        else:
-          ""
-      raise OreError.newException:
-        "Unsupported operation for " & $`a` & "(" & $`a`.kind & " - '" & $`opStr` & "'" & lnInfo 
-
-macro batchGenOps() =
-  ## Generate all the possible operations for Variant types
-  template callGenFunc(name, target): untyped =
-    newCall(ident(name), newTree(kind=nnkAccQuoted, target))
-
-  result = newStmtList()
-  for i in opPlus..OperatorKind.high:
-    if i in {opEq, opNot}: continue
-    let opIdent = ident(opKindToStr[i])
-    result.add callGenFunc("genBinOp", opIdent)
-  for i in [opPlus, opMinus, opNot]:
-    let opIdent = ident(opKindToStr[i])
-    result.add callGenFunc("genUnOp", opIdent)
-
-batchGenOps()
-
-type
   OreContext* = ref object
     ctx*: OreContext
     path*: string
@@ -1312,7 +1077,7 @@ proc setVar*(ctx: var OreContext, name: string, val: Variant) =
 proc getVar*(ctx: OreContext, name: string): Variant =
   ## Get variable in ore context, if doesn't exist
   ## returns Variant.null
-  if ctx == nil: return Variant.null
+  if ctx == nil: return nil.toVariant
   if name in ctx.variables:
     ctx.variables[name]
   else:
@@ -1353,81 +1118,79 @@ proc applyBlockOverride(ctx: var OreContext, name: string) =
   else:
     ctx.ctx.applyBlockOverride(name)
 
-func evalExpression(ctx: OreContext, node: Node): Variant =
-
-  macro genBinOperatorsImpl() =
-    ## Generate implementation of every operator for Variant
-    result = newStmtList(
-      newTree(
-        kind=nnkCaseStmt,
-        newDotExpr(newDotExpr(ident("node"),ident("origin")),ident("opKind"))
-      )
-    )
-
-    template getSide(side: string): untyped =
-      newCall(
-        newDotExpr(ident("ctx"),ident("evalExpression")),
-        newDotExpr(ident("node"),ident(side))
-      )
-
-    let caseStmt = result[0]
-    for i in opPlus..OperatorKind.high:
-      if i in {opEq, opNot}: continue  # not applicable, skip
-      let
-        opIdent = ident(opKindToStr[i])
-        impl = newStmtList(
-          newAssignment(
-            ident("result"),
-            newTree(kind=nnkInfix, opIdent, getSide("left"), getSide("right"), ident("node"))
-          )
-        )
-      caseStmt.add(newTree(kind=nnkOfBranch,ident($i),impl))
-    caseStmt.add(
-      newTree(
-        kind=nnkElse,
-        newStmtList(
-          newTree(
-            kind=nnkRaiseStmt,
-            newCall(
-              newDotExpr(ident("OreError"),ident("newException")),
-              newStrLitNode("Operation unsupported.")
-            )
-          )
-        )
-      )
-    )
-
+proc evalExpression(ctx: OreContext, node: Node): Variant =
   case node.kind
-  of ndValue:
-    let value = node.origin
-    case value.kind
-    of tkVar:
-      if value.strValue == "null":
-        result = Variant.null(node)
-      else:
-        result = ctx.getVar(value.strValue)
-    else:
-      result = node.origin.toVariant(node)
-
-  of ndUnOp:
-    case node.origin.opKind
-    of opMinus:
-      result = `-`(ctx.evalExpression(node.operand), node)
-    of opPlus:
-      result = `+`(ctx.evalExpression(node.operand), node)
-    of opNot:
-      result = `not`(ctx.evalExpression(node.operand), node)
-    else:
-      raise OreError.newException:
-        fmt"Unsupported unary operator - {node.origin.opKind}"
-
   of ndBinOp:
-    genBinOperatorsImpl()
-
+    doAssert node.origin.kind == tkOperator
+    try:
+      case node.origin.opKind
+      of opPlus:
+        result = ctx.evalExpression(node.left) + ctx.evalExpression(node.right)
+      of opMinus:
+        result = ctx.evalExpression(node.left) - ctx.evalExpression(node.right)
+      of opMult:
+        result = ctx.evalExpression(node.left) * ctx.evalExpression(node.right)
+      of opDivide:
+        result = ctx.evalExpression(node.left) / ctx.evalExpression(node.right)
+      of opAmp:
+        result = ctx.evalExpression(node.left) & ctx.evalExpression(node.right)
+      of opCmpEq:
+        result = ctx.evalExpression(node.left) == ctx.evalExpression(node.right)
+      of opCmpEqGt:
+        result = ctx.evalExpression(node.left) >= ctx.evalExpression(node.right)
+      of opCmpEqLs:
+        result = ctx.evalExpression(node.left) <= ctx.evalExpression(node.right)
+      of opCmpGt:
+        result = ctx.evalExpression(node.left) > ctx.evalExpression(node.right)
+      of opCmpLs:
+        result = ctx.evalExpression(node.left) < ctx.evalExpression(node.right)
+      of opIn:
+        result = ctx.evalExpression(node.left) in ctx.evalExpression(node.right)
+      of opNotIn:
+        result = ctx.evalExpression(node.left) notin ctx.evalExpression(node.right)
+      of opAnd:
+        result = ctx.evalExpression(node.left) and ctx.evalExpression(node.right)
+      else:
+        raise OreError.newException:
+          "Unimplemented operation: " & ($node.origin).escape
+    except DynamicTypeError as e:
+      raise OreError.newException(
+        "Type error at " & node.getNodePos.humanRepr() & ": " & getCurrentExceptionMsg(),
+        parentException=e
+      )
+  of ndValue:
+    case node.origin.kind
+    of tkInt:
+      result = node.origin.intValue.toVariant()
+    of tkFloat:
+      result = node.origin.floatValue.toVariant()
+    of tkBool:
+      result = node.origin.boolValue.toVariant()
+    of tkStr:
+      result = node.origin.strValue.toVariant()
+    of tkVar:
+      result = ctx.getVar(node.origin.strValue)
+    else: unreachable()
+  of ndUnOp:
+    doAssert node.origin.kind == tkOperator
+    try:
+      case node.origin.opKind
+      of opMinus:
+        result = -ctx.evalExpression(node.operand)
+      of opPlus:
+        result = +ctx.evalExpression(node.operand)
+      of opNot:
+        result = not ctx.evalExpression(node.operand)
+      else: unreachable()
+    except DynamicTypeError as e:
+      raise OreError.newException(
+        "Type error at " & node.getNodePos.humanRepr() & ": " & getCurrentExceptionMsg(),
+        parentException=e
+      )
   of ndList:
-    result = Variant(origin: node, kind: varList, items: @[])
+    result = Variant(kind: varList)
     for i in node.items:
-      result.items.add ctx.evalExpression(i)
+      result.add ctx.evalExpression(i)
   else: unreachable()
 
 proc parseString(ctx: var OreContext, input: string): Node =
@@ -1503,9 +1266,10 @@ proc renderNode(ctx: var OreContext, node: Node): string =
     let iter = ctx.evalExpression(node.iter)
     case iter.kind
     of varList:
-      var i = iter.items.low
-      while i <= iter.items.high:
-        ctx.setVar(name, iter.items[i])
+      var list = value[seq[Variant]](iter)
+      var i = list.low
+      while i <= list.high:
+        ctx.setVar(name, list[i])
         result &= ctx.renderNode(node.body)
         i += 1
     else:
