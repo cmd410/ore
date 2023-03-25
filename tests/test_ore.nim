@@ -63,3 +63,7 @@ suite "Test Ore Context":
   test "Test for loop":
     var e = initOreContext()
     check e.renderString("{% for i in [1,2,3,4] %}{{ i }} {% endfor %}") == "1 2 3 4 "
+
+  test "Test for loop over range":
+    var e = initOreContext()
+    check e.renderString("{% for i in 0..10 %}{{ i }}{% endfor %}") == "012345678910"

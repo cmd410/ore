@@ -1152,9 +1152,11 @@ proc evalExpression(ctx: OreContext, node: Node): Variant =
         result = ctx.evalExpression(node.left) notin ctx.evalExpression(node.right)
       of opAnd:
         result = ctx.evalExpression(node.left) and ctx.evalExpression(node.right)
+      of opDoubleDot:
+        result = ctx.evalExpression(node.left) .. ctx.evalExpression(node.right)
       else:
         raise OreError.newException:
-          "Unimplemented operation: " & ($node.origin).escape
+          "Unimplemented operation at " & node.getNodePos.humanRepr() & ": " & ($node.origin).escape
     except DynamicTypeError as e:
       raise OreError.newException(
         "Type error at " & node.getNodePos.humanRepr() & ": " & getCurrentExceptionMsg(),

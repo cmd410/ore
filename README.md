@@ -47,7 +47,7 @@ Example:
 {% else %}
 {% endif %}
 
-# for loop blocks (WIP)
+# for loop blocks
 {% for i in iterator %}
 {% endfor %}
 
