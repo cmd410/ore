@@ -96,6 +96,8 @@ type
     opIn, opNotIn,
     # not
     opNot
+    # ..
+    opDoubleDot
 
   BracketKind = enum
     brLParen, brRParen,
@@ -126,8 +128,8 @@ type
 
 # Enum to string conversions
 const brKindToStr: array[BracketKind, string] = ["(", ")", "[", "]"]
-const opKindToStr: array[OperatorKind, string] = [".", "+", "-", "*", "/", "&", "=", "==", "<", ">", "<=", ">=", "and", "or", "xor", "in", "notin", "not"]
-const opToPrecedence: array[OperatorKind, int] = [ 10,  8,   8,   9,   9,   7 ,  1,   5,    5,   5,   5,    5  ,   4,    3,     3  ,   5,    5    ,   0  ]
+const opKindToStr: array[OperatorKind, string] = [".", "+", "-", "*", "/", "&", "=", "==", "<", ">", "<=", ">=", "and", "or", "xor", "in", "notin", "not", ".."]
+const opToPrecedence: array[OperatorKind, int] = [ 10,  8,   8,   9,   9,   7 ,  1,   5,    5,   5,   5,    5  ,   4,    3,     3  ,   5,    5    ,   0  ,  6  ]
 
 
 func initToken(pos: CodePos, kind: static[TokenKind]): Token =
@@ -1272,6 +1274,11 @@ proc renderNode(ctx: var OreContext, node: Node): string =
         ctx.setVar(name, list[i])
         result &= ctx.renderNode(node.body)
         i += 1
+    of varRange:
+      var rng = value[RangeTuple](iter)
+      for i in rng.rstart..rng.rend:
+        ctx.setVar(name, i.toVariant())
+        result &= ctx.renderNode(node.body)
     else:
       raise OreError.newException:
         "Unsupported iteration over " & $iter.kind
