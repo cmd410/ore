@@ -23,7 +23,7 @@ suite "Test Ore Context":
 
   test "Test lists":
     var e = initOreContext()
-    check e.renderString("{{4 in [1, 2,] & [3, 4]}}") == "true"
+    check e.renderString("{{4 in [1, 2] & [3, 4]}}") == "true"
 
   test "Test blocks":
     const input = "{% block TestBlock %}Test{% endblock %}"
@@ -67,3 +67,7 @@ suite "Test Ore Context":
   test "Test for loop over range":
     var e = initOreContext()
     check e.renderString("{% for i in 0..10 %}{{ i }}{% endfor %}") == "012345678910"
+
+  test "Test function call":
+    var e = initOreContext()
+    echo e.parseString("{{ function(12, name = \"Jack\") }}").treeRepr
