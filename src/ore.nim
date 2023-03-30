@@ -266,6 +266,12 @@ func humanRepr(tk: Token): string =
   result &= fmt"at {tk.pos.humanRepr}"
 
 
+proc syntaxError(pos: CodePos, message: string = "unknown") {.noreturn.} =
+  ## Raise a syntax error with a helpful message
+  raise (newException) OreError:
+    "Syntax error: " & message & " at " & $pos.humanRepr
+
+
 type
   LexState = enum
     lexStateText
@@ -395,8 +401,7 @@ func tokenizeExpr(lex: var Lexer): Token =
       result = pos.initToken(tkStmtStart)
       return
     else:
-      raise OreError.newException:
-        "Unexpected error"
+      pos.syntaxError "Unexpected error"
 
   case c
   of '1', '2', '3', '4', '5', '6', '7', '8', '9', '0':
@@ -417,11 +422,9 @@ func tokenizeExpr(lex: var Lexer): Token =
         of '"': text &= '"'
         # TODO: \u1234 \x12 stuff
         else:
-          raise OreError.newException:
-            fmt"Invalid escape sequence at {esqPos.humanRepr}"
+          esqPos.syntaxError "Invalid escape sequence"
       of '\0':
-        raise OreError.newException:
-          fmt"Unexpected end of file while parsing string at {pos.humanRepr}"
+        pos.syntaxError "Unexpected end of file while parsing string"
       else:
         text &= c
       c = lex.advance()
@@ -734,16 +737,12 @@ func initParser(s: string): Parser =
 proc unreachable() {.noreturn.} =
   ## Call on unreacahble? branches and other
   ## impossible? condition to catch bugs in parser 
-  raise OreError.newException:
+  raise (newException) OreError:
     (
-      "Invalid syntax." &
+      "Impossible happened." &
       "This is likely a bug in the parser, please report at " &
       "https://github.com/cmd410/ore/issues"
     )
-
-proc syntaxError(pos: CodePos, message: string = "unknown") {.noreturn.} =
-  ## Raise a syntax error with a helpful message
-  raise OreError.newException: "Syntax error: " & message & " at " & $pos.humanRepr
 
 template assertRule(p: Parser, rule: untyped, pos: CodePos, message: string = "unknown"): untyped =
   ## Check if given rule is satisfied
@@ -1014,8 +1013,7 @@ proc parseBlock(p: var Parser, tillStmt: static[string] = ""): Node =
           break
         else: unreachable()
       else:
-        raise OreError.newException:
-          fmt"Unknown statement '{stmtStart}' at {stmtStart.pos.humanRepr}"
+        stmtStart.pos.syntaxError "Unknown statement '" & $stmtStart & "'"
       p.state = parseStateText
     
     case p.cTok.kind
@@ -1139,7 +1137,7 @@ proc evalExpression(ctx: var OreContext, node: Node): Variant =
         ctx.setVar(node.left.origin.strValue, ctx.evalExpression(node.right))
         result = nil.toVariant()
       else:
-        raise OreError.newException:
+        raise (newException) OreError:
           "Unimplemented operation at " & node.getNodePos.humanRepr() & ": " & ($node.origin).escape
     except DynamicTypeError as e:
       raise OreError.newException(
@@ -1265,8 +1263,9 @@ proc renderNode(ctx: var OreContext, node: Node): string =
         ctx.setVar(name, i.toVariant())
         result &= ctx.renderNode(node.body)
     else:
-      raise OreError.newException:
+      raise (newException) OreError:
         "Unsupported iteration over " & $iter.kind
+
   # all extends nodes should be eliminated at this point in rope branch
   of ndExtends: unreachable()
   of ndFuncCall: unreachable()
